@@ -142,6 +142,20 @@ class JobServiceTest {
         assertTrue(job.getMessage().contains("No downloader implementation"));
     }
 
+    @Test
+    void shutdownShouldCancelRunningExecution() {
+        ObservingBlockingDownloader blocking = new ObservingBlockingDownloader();
+        jobService = new JobService(List.of(blocking), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.YTDLP, "https://example.com/long");
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.RUNNING, 3000), "Job should start");
+
+        jobService.shutdown();
+
+        assertTrue(waitUntil(blocking::cancelObserved, 2000), "Running downloader should observe cancellation");
+        assertEquals(JobStatus.CANCELED, jobService.get(jobId).getStatus());
+    }
+
     private NodeProperties nodeProperties() {
         NodeProperties properties = new NodeProperties();
         properties.setMaxParallel(1);
@@ -241,6 +255,34 @@ class JobServiceTest {
         @SuppressWarnings("unused")
         private boolean started() {
             return started.get();
+        }
+    }
+
+    private static final class ObservingBlockingDownloader implements Downloader {
+        private final AtomicBoolean cancelObserved = new AtomicBoolean(false);
+
+        @Override
+        public JobType id() {
+            return JobType.YTDLP;
+        }
+
+        @Override
+        public DownloadResult download(DownloadRequest request,
+                                       DownloadExecutionContext context,
+                                       java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
+            try {
+                while (!context.isCanceled()) {
+                    Thread.sleep(20);
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            cancelObserved.set(true);
+            throw new CancellationException("canceled");
+        }
+
+        private boolean cancelObserved() {
+            return cancelObserved.get();
         }
     }
 }
