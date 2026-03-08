@@ -20,9 +20,9 @@ RUN apt-get update \
 
 RUN mkdir -p /downloads
 
-COPY --from=build /build/target/*.war /app/lms-node.war
+COPY --from=build /build/target/lms-node-*.jar /app/lms-node.jar
 
 EXPOSE 8080
 VOLUME ["/downloads"]
 
-ENTRYPOINT ["java", "-Dspring.jmx.enabled=false", "-jar", "/app/lms-node.war"]
+ENTRYPOINT ["java", "-Dspring.jmx.enabled=false", "-jar", "/app/lms-node.jar"]
