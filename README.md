@@ -149,6 +149,20 @@ JOB_URL="https://example.com/file.bin" \
 ./scripts/smoke-api.sh
 ```
 
+Or use interactive CLI helper for individual operations:
+
+```bash
+BASE_URL="http://127.0.0.1:8080" \
+CLIENT_ID="router-main" \
+CLIENT_SECRET="change-me" \
+./scripts/node-cli.sh create DIRECT https://example.com/file.bin
+
+BASE_URL="http://127.0.0.1:8080" \
+CLIENT_ID="router-main" \
+CLIENT_SECRET="change-me" \
+./scripts/node-cli.sh list true
+```
+
 ## Operational notes
 
 - Job and nonce stores are in memory (restart resets state).
