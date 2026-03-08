@@ -69,19 +69,19 @@ public class YtDlpDownloader implements Downloader {
         return new DownloadResult(null, lastLine == null ? "yt-dlp finished" : lastLine);
     }
 
-    private ProgressUpdate parseProgress(String line) {
+    ProgressUpdate parseProgress(String line) {
         Matcher percentMatcher = PERCENT_PATTERN.matcher(line);
         Matcher speedMatcher = SPEED_PATTERN.matcher(line);
         Matcher etaMatcher = ETA_PATTERN.matcher(line);
 
-        Double percent = percentMatcher.find() ? Double.parseDouble(percentMatcher.group(1)) : null;
+        Double percent = percentMatcher.find() ? parseDoubleSafely(percentMatcher.group(1)) : null;
         Long speedBytes = speedMatcher.find() ? parseBytesPerSecond(speedMatcher.group(1)) : null;
         Long etaSeconds = etaMatcher.find() ? parseEtaSeconds(etaMatcher.group(1)) : null;
 
         return new ProgressUpdate(percent, speedBytes, etaSeconds, line);
     }
 
-    private Long parseBytesPerSecond(String speed) {
+    Long parseBytesPerSecond(String speed) {
         String normalized = speed.replace(" ", "").toUpperCase();
         if (!normalized.endsWith("/S")) {
             return null;
@@ -109,10 +109,14 @@ public class YtDlpDownloader implements Downloader {
             numericPart = numericPart.substring(0, numericPart.length() - 1);
         }
 
-        return (long) (Double.parseDouble(numericPart) * multiplier);
+        try {
+            return (long) (Double.parseDouble(numericPart) * multiplier);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
-    private Long parseEtaSeconds(String value) {
+    Long parseEtaSeconds(String value) {
         String[] parts = value.split(":");
         try {
             if (parts.length == 2) {
@@ -122,6 +126,14 @@ public class YtDlpDownloader implements Downloader {
                 return Long.parseLong(parts[0]) * 3600L + Long.parseLong(parts[1]) * 60L + Long.parseLong(parts[2]);
             }
             return null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private Double parseDoubleSafely(String value) {
+        try {
+            return Double.parseDouble(value);
         } catch (NumberFormatException ex) {
             return null;
         }

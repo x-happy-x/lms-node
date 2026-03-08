@@ -81,7 +81,7 @@ public class DirectHttpDownloader implements Downloader {
         return new DownloadResult(outputFile.toString(), "Completed");
     }
 
-    private Path resolveOutputPath(DownloadRequest request, HttpResponse<?> response) {
+    Path resolveOutputPath(DownloadRequest request, HttpResponse<?> response) {
         Optional<String> contentDisposition = response.headers().firstValue("Content-Disposition");
         if (contentDisposition.isPresent()) {
             String header = contentDisposition.get();
@@ -90,7 +90,7 @@ public class DirectHttpDownloader implements Downloader {
             if (idx >= 0) {
                 String raw = header.substring(idx + marker.length()).trim().replace("\"", "");
                 if (!raw.isBlank()) {
-                    return request.downloadDir().resolve(raw);
+                    return request.downloadDir().resolve(sanitizeFileName(raw, request.jobId()));
                 }
             }
         }
@@ -99,9 +99,19 @@ public class DirectHttpDownloader implements Downloader {
         String fileName = (path == null || path.isBlank() || path.endsWith("/"))
                 ? request.jobId() + ".bin"
                 : path.substring(path.lastIndexOf('/') + 1);
-        if (fileName.isBlank()) {
-            fileName = request.jobId() + ".bin";
+        return request.downloadDir().resolve(sanitizeFileName(fileName, request.jobId()));
+    }
+
+    private String sanitizeFileName(String candidate, java.util.UUID jobId) {
+        String normalized = candidate.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        if (slash >= 0) {
+            normalized = normalized.substring(slash + 1);
         }
-        return request.downloadDir().resolve(fileName);
+        normalized = normalized.trim();
+        if (normalized.isBlank() || ".".equals(normalized) || "..".equals(normalized)) {
+            return jobId + ".bin";
+        }
+        return normalized;
     }
 }

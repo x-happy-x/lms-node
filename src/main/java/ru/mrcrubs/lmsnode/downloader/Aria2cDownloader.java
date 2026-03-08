@@ -68,7 +68,7 @@ public class Aria2cDownloader implements Downloader {
         return new DownloadResult(null, lastLine == null ? "aria2c finished" : lastLine);
     }
 
-    private ProgressUpdate parseProgress(String line) {
+    ProgressUpdate parseProgress(String line) {
         Matcher percentMatcher = PERCENT_PATTERN.matcher(line);
         Matcher speedMatcher = SPEED_PATTERN.matcher(line);
 
@@ -78,7 +78,7 @@ public class Aria2cDownloader implements Downloader {
         return new ProgressUpdate(percent, speedBytes, null, line);
     }
 
-    private Long parseBytes(String value) {
+    Long parseBytes(String value) {
         String normalized = value.trim().toUpperCase();
         long multiplier = 1;
 
