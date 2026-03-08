@@ -18,6 +18,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -87,6 +89,59 @@ class JobServiceTest {
         assertTrue(active.stream().allMatch(j -> j.getStatus() == JobStatus.RUNNING || j.getStatus() == JobStatus.QUEUED));
     }
 
+    @Test
+    void cancelQueuedJobShouldPreventDownloaderExecution() {
+        BlockingDownloader first = new BlockingDownloader();
+        RecordingDownloader second = new RecordingDownloader(JobType.DIRECT);
+        jobService = new JobService(List.of(first, second), nodeProperties(), new InMemoryJobRepository());
+
+        UUID firstJobId = jobService.create(JobType.YTDLP, "https://example.com/long");
+        UUID secondJobId = jobService.create(JobType.DIRECT, "https://example.com/queued");
+
+        assertTrue(waitUntil(() -> jobService.get(firstJobId).getStatus() == JobStatus.RUNNING, 3000), "First job should run");
+        assertEquals(JobStatus.QUEUED, jobService.get(secondJobId).getStatus());
+
+        jobService.cancel(secondJobId);
+        assertEquals(JobStatus.CANCELED, jobService.get(secondJobId).getStatus());
+
+        jobService.cancel(firstJobId);
+        assertTrue(waitUntil(() -> jobService.get(firstJobId).getStatus() == JobStatus.CANCELED, 3000), "First job should cancel");
+
+        // Give worker thread enough time to pick queued task and skip execution due canceled status.
+        assertTrue(waitUntil(() -> second.invocations() == 0, 500), "Queued canceled job must not start downloader");
+        assertEquals(0, second.invocations());
+    }
+
+    @Test
+    void queuedJobShouldStartAfterRunningJobFinishes() {
+        BlockingDownloader first = new BlockingDownloader();
+        RecordingDownloader second = new RecordingDownloader(JobType.DIRECT);
+        jobService = new JobService(List.of(first, second), nodeProperties(), new InMemoryJobRepository());
+
+        UUID firstJobId = jobService.create(JobType.YTDLP, "https://example.com/long");
+        UUID secondJobId = jobService.create(JobType.DIRECT, "https://example.com/next");
+
+        assertTrue(waitUntil(() -> jobService.get(firstJobId).getStatus() == JobStatus.RUNNING, 3000), "First job should run");
+        assertEquals(JobStatus.QUEUED, jobService.get(secondJobId).getStatus());
+
+        jobService.cancel(firstJobId);
+        assertTrue(waitUntil(() -> jobService.get(firstJobId).getStatus() == JobStatus.CANCELED, 3000), "First job should cancel");
+        assertTrue(waitUntil(() -> jobService.get(secondJobId).getStatus() == JobStatus.DONE, 3000), "Second job should execute after first");
+        assertEquals(1, second.invocations());
+    }
+
+    @Test
+    void missingDownloaderShouldMoveJobToError() {
+        jobService = new JobService(List.of(new ImmediateDownloader(JobType.DIRECT)), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.ARIA2C, "https://example.com/archive");
+
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.ERROR, 3000), "Job should fail without downloader");
+        DownloadJob job = jobService.get(jobId);
+        assertNotNull(job.getFinishedAt());
+        assertTrue(job.getMessage().contains("No downloader implementation"));
+    }
+
     private NodeProperties nodeProperties() {
         NodeProperties properties = new NodeProperties();
         properties.setMaxParallel(1);
@@ -152,6 +207,40 @@ class JobServiceTest {
                 Thread.sleep(20);
             }
             throw new CancellationException("canceled");
+        }
+    }
+
+    private static final class RecordingDownloader implements Downloader {
+        private final JobType type;
+        private final AtomicInteger invocations = new AtomicInteger();
+        private final AtomicBoolean started = new AtomicBoolean();
+
+        private RecordingDownloader(JobType type) {
+            this.type = type;
+        }
+
+        @Override
+        public JobType id() {
+            return type;
+        }
+
+        @Override
+        public DownloadResult download(DownloadRequest request,
+                                       DownloadExecutionContext context,
+                                       java.util.function.Consumer<ProgressUpdate> progressConsumer) {
+            started.set(true);
+            invocations.incrementAndGet();
+            progressConsumer.accept(new ProgressUpdate(90.0, 42L, 1L, "almost done"));
+            return new DownloadResult(request.downloadDir().resolve(request.jobId() + ".bin").toString(), "done");
+        }
+
+        private int invocations() {
+            return invocations.get();
+        }
+
+        @SuppressWarnings("unused")
+        private boolean started() {
+            return started.get();
         }
     }
 }

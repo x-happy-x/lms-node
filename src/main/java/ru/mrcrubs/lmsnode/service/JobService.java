@@ -25,9 +25,11 @@ import java.util.stream.Collectors;
 @Service
 public class JobService {
     private static final EnumSet<JobStatus> ACTIVE_STATUSES = EnumSet.of(JobStatus.QUEUED, JobStatus.RUNNING);
+    private static final long PROGRESS_THROTTLE_MILLIS = 1000L;
 
     private final JobRepository jobRepository;
     private final Map<UUID, DownloadExecutionContext> executions = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastProgressUpdateMillis = new ConcurrentHashMap<>();
     private final Map<JobType, Downloader> downloaders;
     private final ExecutorService executor;
     private final Path downloadDir;
@@ -126,6 +128,7 @@ public class JobService {
             }
         } finally {
             executions.remove(job.getJobId());
+            lastProgressUpdateMillis.remove(job.getJobId());
         }
     }
 
@@ -134,6 +137,12 @@ public class JobService {
             if (job.getStatus() != JobStatus.RUNNING) {
                 return;
             }
+            long now = System.currentTimeMillis();
+            Long lastUpdate = lastProgressUpdateMillis.get(job.getJobId());
+            if (lastUpdate != null && now - lastUpdate < PROGRESS_THROTTLE_MILLIS) {
+                return;
+            }
+            lastProgressUpdateMillis.put(job.getJobId(), now);
             if (update.percent() != null) {
                 job.setPercent(update.percent());
             }
