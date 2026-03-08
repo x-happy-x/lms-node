@@ -41,10 +41,6 @@ public class DownloadJob {
         return status;
     }
 
-    public void setStatus(JobStatus status) {
-        this.status = status;
-    }
-
     public Double getPercent() {
         return percent;
     }
@@ -103,5 +99,51 @@ public class DownloadJob {
 
     public void setOutputPath(String outputPath) {
         this.outputPath = outputPath;
+    }
+
+    public boolean isTerminal() {
+        return status == JobStatus.DONE || status == JobStatus.ERROR || status == JobStatus.CANCELED;
+    }
+
+    public boolean start(Instant at, String initialMessage) {
+        if (status != JobStatus.QUEUED) {
+            return false;
+        }
+        status = JobStatus.RUNNING;
+        startedAt = at;
+        message = initialMessage;
+        return true;
+    }
+
+    public boolean cancel(Instant at, String cancelMessage) {
+        if (isTerminal()) {
+            return false;
+        }
+        status = JobStatus.CANCELED;
+        finishedAt = at;
+        message = cancelMessage;
+        return true;
+    }
+
+    public boolean complete(Instant at, String doneMessage, String finalOutputPath) {
+        if (status != JobStatus.RUNNING) {
+            return false;
+        }
+        status = JobStatus.DONE;
+        finishedAt = at;
+        percent = 100.0;
+        message = doneMessage;
+        outputPath = finalOutputPath;
+        return true;
+    }
+
+    public boolean fail(Instant at, String errorMessage) {
+        if (status != JobStatus.RUNNING) {
+            return false;
+        }
+        status = JobStatus.ERROR;
+        finishedAt = at;
+        message = errorMessage;
+        return true;
     }
 }

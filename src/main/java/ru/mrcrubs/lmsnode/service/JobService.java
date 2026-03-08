@@ -4,6 +4,7 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 import ru.mrcrubs.lmsnode.config.NodeProperties;
 import ru.mrcrubs.lmsnode.downloader.*;
+import ru.mrcrubs.lmsnode.infra.JobRepository;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
 import ru.mrcrubs.lmsnode.model.JobType;
@@ -25,13 +26,14 @@ import java.util.stream.Collectors;
 public class JobService {
     private static final EnumSet<JobStatus> ACTIVE_STATUSES = EnumSet.of(JobStatus.QUEUED, JobStatus.RUNNING);
 
-    private final Map<UUID, DownloadJob> jobs = new ConcurrentHashMap<>();
+    private final JobRepository jobRepository;
     private final Map<UUID, DownloadExecutionContext> executions = new ConcurrentHashMap<>();
     private final Map<JobType, Downloader> downloaders;
     private final ExecutorService executor;
     private final Path downloadDir;
 
-    public JobService(List<Downloader> downloaderList, NodeProperties nodeProperties) {
+    public JobService(List<Downloader> downloaderList, NodeProperties nodeProperties, JobRepository jobRepository) {
+        this.jobRepository = jobRepository;
         this.downloaders = downloaderList.stream().collect(Collectors.toUnmodifiableMap(Downloader::id, Function.identity()));
         this.executor = Executors.newFixedThreadPool(Math.max(1, nodeProperties.getMaxParallel()));
         this.downloadDir = Path.of(nodeProperties.getDownloadDir());
@@ -40,14 +42,14 @@ public class JobService {
     public UUID create(JobType type, String url) {
         UUID jobId = UUID.randomUUID();
         DownloadJob job = new DownloadJob(jobId, type, url, Instant.now());
-        jobs.put(jobId, job);
+        jobRepository.save(job);
 
         executor.submit(() -> runJob(job));
         return jobId;
     }
 
     public List<DownloadJob> list(Boolean activeOnly) {
-        List<DownloadJob> all = new ArrayList<>(jobs.values());
+        List<DownloadJob> all = new ArrayList<>(jobRepository.findAll());
         all.sort(Comparator.comparing(DownloadJob::getCreatedAt).reversed());
 
         if (Boolean.TRUE.equals(activeOnly)) {
@@ -57,22 +59,13 @@ public class JobService {
     }
 
     public DownloadJob get(UUID jobId) {
-        DownloadJob job = jobs.get(jobId);
-        if (job == null) {
-            throw new JobNotFoundException(jobId);
-        }
-        return job;
+        return jobRepository.findById(jobId).orElseThrow(() -> new JobNotFoundException(jobId));
     }
 
     public DownloadJob cancel(UUID jobId) {
         DownloadJob job = get(jobId);
         synchronized (job) {
-            if (job.getStatus() == JobStatus.DONE || job.getStatus() == JobStatus.ERROR || job.getStatus() == JobStatus.CANCELED) {
-                return job;
-            }
-            job.setStatus(JobStatus.CANCELED);
-            job.setFinishedAt(Instant.now());
-            job.setMessage("Canceled by request");
+            job.cancel(Instant.now(), "Canceled by request");
         }
 
         DownloadExecutionContext context = executions.get(jobId);
@@ -91,9 +84,10 @@ public class JobService {
         Downloader downloader = downloaders.get(job.getType());
         if (downloader == null) {
             synchronized (job) {
-                job.setStatus(JobStatus.ERROR);
-                job.setFinishedAt(Instant.now());
-                job.setMessage("No downloader implementation for type " + job.getType());
+                if (!job.isTerminal()) {
+                    job.start(Instant.now(), "Started");
+                    job.fail(Instant.now(), "No downloader implementation for type " + job.getType());
+                }
             }
             return;
         }
@@ -102,13 +96,10 @@ public class JobService {
         executions.put(job.getJobId(), context);
 
         synchronized (job) {
-            if (job.getStatus() == JobStatus.CANCELED) {
+            if (job.getStatus() == JobStatus.CANCELED || !job.start(Instant.now(), "Started")) {
                 executions.remove(job.getJobId());
                 return;
             }
-            job.setStatus(JobStatus.RUNNING);
-            job.setStartedAt(Instant.now());
-            job.setMessage("Started");
         }
 
         try {
@@ -118,27 +109,19 @@ public class JobService {
 
             synchronized (job) {
                 if (job.getStatus() != JobStatus.CANCELED) {
-                    job.setStatus(JobStatus.DONE);
-                    job.setFinishedAt(Instant.now());
-                    job.setPercent(100.0);
-                    job.setMessage(result.message());
-                    job.setOutputPath(result.outputPath());
+                    job.complete(Instant.now(), result.message(), result.outputPath());
                 }
             }
         } catch (CancellationException ex) {
             synchronized (job) {
                 if (job.getStatus() != JobStatus.CANCELED) {
-                    job.setStatus(JobStatus.CANCELED);
-                    job.setMessage("Canceled");
-                    job.setFinishedAt(Instant.now());
+                    job.cancel(Instant.now(), "Canceled");
                 }
             }
         } catch (Exception ex) {
             synchronized (job) {
                 if (job.getStatus() != JobStatus.CANCELED) {
-                    job.setStatus(JobStatus.ERROR);
-                    job.setFinishedAt(Instant.now());
-                    job.setMessage(ex.getMessage());
+                    job.fail(Instant.now(), ex.getMessage());
                 }
             }
         } finally {

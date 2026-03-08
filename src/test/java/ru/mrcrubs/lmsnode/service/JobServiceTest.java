@@ -8,6 +8,7 @@ import ru.mrcrubs.lmsnode.downloader.DownloadRequest;
 import ru.mrcrubs.lmsnode.downloader.DownloadResult;
 import ru.mrcrubs.lmsnode.downloader.Downloader;
 import ru.mrcrubs.lmsnode.downloader.ProgressUpdate;
+import ru.mrcrubs.lmsnode.infra.InMemoryJobRepository;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
 import ru.mrcrubs.lmsnode.model.JobType;
@@ -34,7 +35,7 @@ class JobServiceTest {
 
     @Test
     void createShouldRunJobAndExposeDoneState() throws Exception {
-        jobService = new JobService(List.of(new ImmediateDownloader()), nodeProperties());
+        jobService = new JobService(List.of(new ImmediateDownloader()), nodeProperties(), new InMemoryJobRepository());
 
         UUID jobId = jobService.create(JobType.DIRECT, "https://example.com/file.bin");
 
@@ -53,7 +54,7 @@ class JobServiceTest {
 
     @Test
     void cancelShouldStopRunningJobAndSetCanceledStatus() {
-        jobService = new JobService(List.of(new BlockingDownloader()), nodeProperties());
+        jobService = new JobService(List.of(new BlockingDownloader()), nodeProperties(), new InMemoryJobRepository());
 
         UUID jobId = jobService.create(JobType.YTDLP, "https://example.com/video");
 
@@ -69,7 +70,11 @@ class JobServiceTest {
 
     @Test
     void listActiveShouldIncludeQueuedAndRunningOnly() {
-        jobService = new JobService(List.of(new BlockingDownloader(), new ImmediateDownloader(JobType.DIRECT)), nodeProperties());
+        jobService = new JobService(
+                List.of(new BlockingDownloader(), new ImmediateDownloader(JobType.DIRECT)),
+                nodeProperties(),
+                new InMemoryJobRepository()
+        );
 
         UUID runningJobId = jobService.create(JobType.YTDLP, "https://example.com/long");
         UUID queuedJobId = jobService.create(JobType.DIRECT, "https://example.com/queued");
