@@ -1,0 +1,52 @@
+spring:
+  application:
+    # Service name in logs/actuator.
+    name: lms-node
+  profiles:
+    # Default profile for local run without Docker.
+    default: local
+
+server:
+  # Host/interface to bind HTTP server.
+  # 0.0.0.0 = listen on all interfaces.
+  address: ${SERVER_ADDRESS:0.0.0.0}
+  # HTTP port.
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      # Keep actuator minimal in MVP.
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      # K8s/nginx/docker probes friendly output.
+      probes:
+        enabled: true
+
+node:
+  # Download destination directory on node filesystem.
+  # Profile files can override this for prod/test/docker.
+  download-dir: ${NODE_DOWNLOAD_DIR:./downloads}
+  # Max parallel job workers; MVP default is 1.
+  max-parallel: ${NODE_MAX_PARALLEL:1}
+  # Binary names/paths for external tools.
+  tools:
+    ytdlp: ${YTDLP_BIN:yt-dlp}
+    aria2c: ${ARIA2C_BIN:aria2c}
+  auth:
+    # Allowed timestamp drift in seconds.
+    allowed-skew-seconds: ${NODE_AUTH_ALLOWED_SKEW_SECONDS:120}
+    # Nonce replay protection window in seconds.
+    nonce-ttl-seconds: ${NODE_AUTH_NONCE_TTL_SECONDS:600}
+    # Clients map is profile-specific (local/prod/test/local-docker).
+    clients: {}
+
+# MVP has no DB persistence by design (in-memory job store).
+# If/when persistence is added, configure datasource in profile files:
+# spring:
+#   datasource:
+#     url: jdbc:postgresql://127.0.0.1:5432/lms_node
+#     username: lms_node
+#     password: change-me

@@ -1,0 +1,10 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+node:
+  download-dir: ${NODE_DOWNLOAD_DIR:/downloads}
+  auth:
+    clients:
+      router-main: ${NODE_HMAC_SECRET}

@@ -1,0 +1,10 @@
+spring:
+  config:
+    activate:
+      on-profile: test
+
+node:
+  download-dir: ${NODE_DOWNLOAD_DIR:./build/downloads-test}
+  auth:
+    clients:
+      router-main: ${NODE_HMAC_SECRET:test-secret}
