@@ -39,7 +39,7 @@ build_headers() {
   ts="$(date +%s)"
   nonce="$(cat /proc/sys/kernel/random/uuid)"
   body_sha="$(sha256_hex "$body")"
-  payload="${method}\n${path}\n${ts}\n${nonce}\n${body_sha}"
+  printf -v payload '%s\n%s\n%s\n%s\n%s' "$method" "$path" "$ts" "$nonce" "$body_sha"
   sig="$(hmac_hex "$payload")"
 
   cat <<HDR
@@ -61,8 +61,9 @@ request() {
   local path="$2"
   local body="$3"
   local out_file="$4"
+  local canonical_path="${path%%\?*}"
 
-  mapfile -t headers < <(build_headers "$method" "$path" "$body")
+  mapfile -t headers < <(build_headers "$method" "$canonical_path" "$body")
 
   local args=(
     -sS
