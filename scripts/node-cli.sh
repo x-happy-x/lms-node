@@ -11,16 +11,21 @@ Usage:
   BASE_URL=... CLIENT_ID=... CLIENT_SECRET=... ./scripts/node-cli.sh <command> [args]
 
 Commands:
-  create <TYPE> <URL>      Create a job (TYPE: DIRECT|YTDLP|ARIA2C)
+  create <TYPE> <URL> [storagePath]
+                           Create a job (TYPE: DIRECT|YTDLP|ARIA2C)
   list [active]            List jobs; optional active=true|false
   get <JOB_ID>             Get one job
   cancel <JOB_ID>          Cancel job
+  pause <JOB_ID>           Pause job
+  resume <JOB_ID>          Resume paused job
 
 Examples:
   ./scripts/node-cli.sh create DIRECT https://example.com/file.bin
   ./scripts/node-cli.sh list true
   ./scripts/node-cli.sh get 11111111-1111-1111-1111-111111111111
   ./scripts/node-cli.sh cancel 11111111-1111-1111-1111-111111111111
+  ./scripts/node-cli.sh pause 11111111-1111-1111-1111-111111111111
+  ./scripts/node-cli.sh resume 11111111-1111-1111-1111-111111111111
 USAGE
 }
 
@@ -110,8 +115,13 @@ signed_request() {
 cmd_create() {
   local type="$1"
   local url="$2"
+  local storage_path="${3:-}"
   local body
-  body="{\"type\":\"${type}\",\"url\":\"${url}\"}"
+  if [[ -n "$storage_path" ]]; then
+    body="{\"type\":\"${type}\",\"url\":\"${url}\",\"storagePath\":\"${storage_path}\"}"
+  else
+    body="{\"type\":\"${type}\",\"url\":\"${url}\"}"
+  fi
   signed_request POST "/api/jobs" "$body"
 }
 
@@ -134,6 +144,16 @@ cmd_cancel() {
   signed_request POST "/api/jobs/${job_id}/cancel" ""
 }
 
+cmd_pause() {
+  local job_id="$1"
+  signed_request POST "/api/jobs/${job_id}/pause" ""
+}
+
+cmd_resume() {
+  local job_id="$1"
+  signed_request POST "/api/jobs/${job_id}/resume" ""
+}
+
 main() {
   require_cmd curl
   require_cmd openssl
@@ -142,8 +162,8 @@ main() {
   local cmd="${1:-}"
   case "$cmd" in
     create)
-      [[ $# -eq 3 ]] || { usage; exit 1; }
-      cmd_create "$2" "$3"
+      [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 1; }
+      cmd_create "$2" "$3" "${4:-}"
       ;;
     list)
       [[ $# -le 2 ]] || { usage; exit 1; }
@@ -156,6 +176,14 @@ main() {
     cancel)
       [[ $# -eq 2 ]] || { usage; exit 1; }
       cmd_cancel "$2"
+      ;;
+    pause)
+      [[ $# -eq 2 ]] || { usage; exit 1; }
+      cmd_pause "$2"
+      ;;
+    resume)
+      [[ $# -eq 2 ]] || { usage; exit 1; }
+      cmd_resume "$2"
       ;;
     -h|--help|help|"")
       usage

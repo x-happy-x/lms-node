@@ -78,7 +78,7 @@ public class YtDlpDownloader implements Downloader {
         Long speedBytes = speedMatcher.find() ? parseBytesPerSecond(speedMatcher.group(1)) : null;
         Long etaSeconds = etaMatcher.find() ? parseEtaSeconds(etaMatcher.group(1)) : null;
 
-        return new ProgressUpdate(percent, speedBytes, etaSeconds, line);
+        return new ProgressUpdate(percent, null, speedBytes, etaSeconds, line);
     }
 
     Long parseBytesPerSecond(String speed) {

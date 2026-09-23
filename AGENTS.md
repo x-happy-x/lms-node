@@ -248,6 +248,24 @@ Target runtime:
 - Large downloads (0-100+ GB) are expected; external tools should handle robustness.
 - Enforce process execution timeouts/cancellation paths to avoid orphaned workers.
 
+## Deployment Targets
+
+- `s1` = `192.168.99.13`
+  - deploy config: `scripts/deploy-node-s1.env`
+  - remote dir: `/home/amagomedsharipov/lms-node-s1`
+  - container name: `lms-node-s1`
+  - host port: `8080`
+- `s2` = `192.168.99.21`
+  - deploy config: `scripts/deploy-node-s2.env`
+  - remote dir: `/home/amagomedsharipov/lms-node-s2`
+  - container name: `lms-node-s2`
+  - host port: `8080`
+
+Deploy commands:
+
+- `make deploy-s1`
+- `make deploy-s2`
+
 ---
 
 ## MVP Definition of Done

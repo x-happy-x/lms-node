@@ -7,22 +7,30 @@ public class DownloadJob {
     private final UUID jobId;
     private final JobType type;
     private final String url;
+    private final String storagePath;
     private volatile JobStatus status;
     private volatile Double percent;
     private volatile Long speedBytes;
     private volatile Long etaSeconds;
+    private volatile Long totalBytes;
     private volatile String message;
     private final Instant createdAt;
     private volatile Instant startedAt;
     private volatile Instant finishedAt;
     private volatile String outputPath;
+    private volatile Long outputSizeBytes;
 
-    public DownloadJob(UUID jobId, JobType type, String url, Instant createdAt) {
+    public DownloadJob(UUID jobId, JobType type, String url, String storagePath, Instant createdAt) {
         this.jobId = jobId;
         this.type = type;
         this.url = url;
+        this.storagePath = storagePath;
         this.createdAt = createdAt;
         this.status = JobStatus.QUEUED;
+    }
+
+    public DownloadJob(UUID jobId, JobType type, String url, Instant createdAt) {
+        this(jobId, type, url, null, createdAt);
     }
 
     public UUID getJobId() {
@@ -35,6 +43,10 @@ public class DownloadJob {
 
     public String getUrl() {
         return url;
+    }
+
+    public String getStoragePath() {
+        return storagePath;
     }
 
     public JobStatus getStatus() {
@@ -63,6 +75,14 @@ public class DownloadJob {
 
     public void setEtaSeconds(Long etaSeconds) {
         this.etaSeconds = etaSeconds;
+    }
+
+    public Long getTotalBytes() {
+        return totalBytes;
+    }
+
+    public void setTotalBytes(Long totalBytes) {
+        this.totalBytes = totalBytes;
     }
 
     public String getMessage() {
@@ -101,6 +121,14 @@ public class DownloadJob {
         this.outputPath = outputPath;
     }
 
+    public Long getOutputSizeBytes() {
+        return outputSizeBytes;
+    }
+
+    public void setOutputSizeBytes(Long outputSizeBytes) {
+        this.outputSizeBytes = outputSizeBytes;
+    }
+
     public boolean isTerminal() {
         return status == JobStatus.DONE || status == JobStatus.ERROR || status == JobStatus.CANCELED;
     }
@@ -122,6 +150,41 @@ public class DownloadJob {
         status = JobStatus.CANCELED;
         finishedAt = at;
         message = cancelMessage;
+        return true;
+    }
+
+    public boolean pause(Instant at, String pauseMessage) {
+        if (status != JobStatus.QUEUED && status != JobStatus.RUNNING) {
+            return false;
+        }
+        status = JobStatus.PAUSED;
+        message = pauseMessage;
+        // Keep startedAt when pausing a running job.
+        if (finishedAt != null) {
+            finishedAt = null;
+        }
+        return true;
+    }
+
+    public boolean resume(Instant at, String resumeMessage) {
+        if (status != JobStatus.PAUSED) {
+            return false;
+        }
+        status = JobStatus.QUEUED;
+        message = resumeMessage;
+        if (finishedAt != null) {
+            finishedAt = null;
+        }
+        return true;
+    }
+
+    public boolean retry(Instant at, String retryMessage) {
+        if (status != JobStatus.ERROR && status != JobStatus.CANCELED) {
+            return false;
+        }
+        status = JobStatus.QUEUED;
+        message = retryMessage;
+        finishedAt = null;
         return true;
     }
 

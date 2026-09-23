@@ -75,7 +75,7 @@ public class Aria2cDownloader implements Downloader {
         Double percent = percentMatcher.find() ? Double.valueOf(percentMatcher.group(1)) : null;
         Long speedBytes = speedMatcher.find() ? parseBytes(speedMatcher.group(1)) : null;
 
-        return new ProgressUpdate(percent, speedBytes, null, line);
+        return new ProgressUpdate(percent, null, speedBytes, null, line);
     }
 
     Long parseBytes(String value) {

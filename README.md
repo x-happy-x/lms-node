@@ -13,7 +13,7 @@ Remote worker service for home download automation.
 2. Node validates HMAC headers, timestamp, body hash, and nonce replay.
 3. Job is stored in memory and executed by a worker (`maxParallel` default is `1`).
 4. Router polls job state via `GET /api/jobs` and `GET /api/jobs/{jobId}`.
-5. Router can stop job via `POST /api/jobs/{jobId}/cancel`.
+5. Router can stop or pause/resume jobs via `POST /api/jobs/{jobId}/cancel|pause|resume`.
 
 ## Tech stack
 
@@ -77,9 +77,14 @@ Base path: `/api/jobs`
 ```json
 {
   "type": "YTDLP",
-  "url": "https://example.com/video"
+  "url": "https://example.com/video",
+  "storagePath": "movies/yt"
 }
 ```
+
+- `storagePath` is optional.
+- If provided, it is resolved under configured `node.download-dir`.
+- Paths outside `node.download-dir` are rejected with `400`.
 
 Response `201`:
 
@@ -91,7 +96,7 @@ Response `201`:
 
 `GET /api/jobs?active=true`
 
-- `active=true` returns only `QUEUED` and `RUNNING`
+- `active=true` returns `QUEUED`, `PAUSED`, and `RUNNING`
 
 ### Get job
 
@@ -100,6 +105,7 @@ Response `201`:
 Returns:
 
 - `jobId`, `type`, `url`, `status`
+- `storagePath`
 - `percent`, `speedBytes`, `etaSeconds`
 - `message`
 - `createdAt`, `startedAt`, `finishedAt`
@@ -110,6 +116,18 @@ Returns:
 `POST /api/jobs/{jobId}/cancel`
 
 Best effort cancel. Running process is terminated and job becomes `CANCELED`.
+
+### Pause job
+
+`POST /api/jobs/{jobId}/pause`
+
+Pauses queued/running job. Running process is interrupted and job becomes `PAUSED`.
+
+### Resume job
+
+`POST /api/jobs/{jobId}/resume`
+
+Resumes paused job by putting it back into queue (`QUEUED`) for execution.
 
 ## Authentication (HMAC + nonce)
 
@@ -162,6 +180,25 @@ CLIENT_ID="router-main" \
 CLIENT_SECRET="change-me" \
 ./scripts/node-cli.sh list true
 ```
+
+## Deploy
+
+Repository includes a deploy script for the home server:
+
+- `scripts/deploy-node-s1.env` - target `s1` (`192.168.99.13`).
+- `scripts/deploy-node-s2.env` - target `s2` (`192.168.99.21`).
+- `scripts/deploy-node.sh` - builds image locally, uploads it, writes `.env`, then restarts via `docker compose`.
+
+Targets:
+
+- `s1`: `amagomedsharipov@192.168.99.13`
+- `s2`: `amagomedsharipov@192.168.99.21`
+- key: `~/.ssh/homeserver` for both
+
+Quick start:
+
+1. Edit `scripts/deploy-node-s1.env` / `scripts/deploy-node-s2.env` if needed.
+2. Run `make deploy-s1` or `make deploy-s2`.
 
 ## Operational notes
 

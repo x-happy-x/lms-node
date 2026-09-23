@@ -71,6 +71,31 @@ class JobServiceTest {
     }
 
     @Test
+    void pauseAndResumeShouldContinueJobLifecycle() {
+        jobService = new JobService(List.of(new BlockingDownloader()), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.YTDLP, "https://example.com/video");
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.RUNNING, 3000), "Job should start running");
+
+        DownloadJob paused = jobService.pause(jobId);
+        assertEquals(JobStatus.PAUSED, paused.getStatus());
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.PAUSED, 3000), "Job should become paused");
+
+        assertTrue(waitUntil(() -> {
+            try {
+                jobService.resume(jobId);
+                return true;
+            } catch (IllegalStateException ex) {
+                return false;
+            }
+        }, 3000), "Job should become resumable after pause stop");
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.RUNNING, 3000), "Job should run again");
+
+        jobService.cancel(jobId);
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.CANCELED, 3000), "Job should cancel");
+    }
+
+    @Test
     void listActiveShouldIncludeQueuedAndRunningOnly() {
         jobService = new JobService(
                 List.of(new BlockingDownloader(), new ImmediateDownloader(JobType.DIRECT)),
@@ -143,6 +168,46 @@ class JobServiceTest {
     }
 
     @Test
+    void createWithoutImmediateStartShouldKeepJobPausedUntilResume() {
+        RecordingDownloader downloader = new RecordingDownloader(JobType.DIRECT);
+        jobService = new JobService(List.of(downloader), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.DIRECT, "https://example.com/file.bin", null, false);
+
+        DownloadJob job = jobService.get(jobId);
+        assertEquals(JobStatus.PAUSED, job.getStatus());
+        assertNull(job.getStartedAt());
+        assertEquals("Added without start", job.getMessage());
+        assertEquals(0, downloader.invocations());
+
+        jobService.resume(jobId);
+
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.DONE, 3000), "Paused job should run after resume");
+        assertEquals(1, downloader.invocations());
+    }
+
+    @Test
+    void createShouldUseCustomStoragePathInsideBaseDir() throws Exception {
+        jobService = new JobService(List.of(new ImmediateDownloader()), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.DIRECT, "https://example.com/file.bin", "movies/2026");
+
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.DONE, 3000), "Job should finish");
+        DownloadJob job = jobService.get(jobId);
+        assertEquals("movies/2026", job.getStoragePath());
+        assertNotNull(job.getOutputPath());
+        assertTrue(job.getOutputPath().replace('\\', '/').contains("/movies/2026/"), "Output path should include custom dir");
+    }
+
+    @Test
+    void createShouldRejectStoragePathOutsideBaseDir() {
+        jobService = new JobService(List.of(new ImmediateDownloader()), nodeProperties(), new InMemoryJobRepository());
+
+        assertThrows(IllegalArgumentException.class, () ->
+                jobService.create(JobType.DIRECT, "https://example.com/file.bin", "../escape"));
+    }
+
+    @Test
     void shutdownShouldCancelRunningExecution() {
         ObservingBlockingDownloader blocking = new ObservingBlockingDownloader();
         jobService = new JobService(List.of(blocking), nodeProperties(), new InMemoryJobRepository());
@@ -202,7 +267,7 @@ class JobServiceTest {
             Path output = request.downloadDir().resolve(request.jobId() + ".bin");
             Files.createDirectories(output.getParent());
             Files.writeString(output, "ok");
-            progressConsumer.accept(new ProgressUpdate(50.0, 1000L, 1L, "half"));
+            progressConsumer.accept(new ProgressUpdate(50.0, null, 1000L, 1L, "half"));
             return new DownloadResult(output.toString(), "done");
         }
     }
@@ -244,7 +309,7 @@ class JobServiceTest {
                                        java.util.function.Consumer<ProgressUpdate> progressConsumer) {
             started.set(true);
             invocations.incrementAndGet();
-            progressConsumer.accept(new ProgressUpdate(90.0, 42L, 1L, "almost done"));
+            progressConsumer.accept(new ProgressUpdate(90.0, null, 42L, 1L, "almost done"));
             return new DownloadResult(request.downloadDir().resolve(request.jobId() + ".bin").toString(), "done");
         }
 

@@ -10,10 +10,13 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import ru.mrcrubs.lmsnode.api.DownloadOptionResponse;
+import ru.mrcrubs.lmsnode.api.JobPreflightResponse;
 import ru.mrcrubs.lmsnode.auth.HmacAuthFilter;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
 import ru.mrcrubs.lmsnode.model.JobType;
+import ru.mrcrubs.lmsnode.service.DownloadPreflightService;
 import ru.mrcrubs.lmsnode.service.JobNotFoundException;
 import ru.mrcrubs.lmsnode.service.JobService;
 
@@ -23,6 +26,7 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -44,10 +48,39 @@ class JobControllerWebMvcTest {
     @MockitoBean
     private JobService jobService;
 
+    @MockitoBean
+    private DownloadPreflightService downloadPreflightService;
+
+    @Test
+    void preflightShouldReturnCapabilities() throws Exception {
+        when(downloadPreflightService.preflight("https://example.com/file")).thenReturn(new JobPreflightResponse(
+                "https://example.com/file",
+                123L,
+                true,
+                JobType.DIRECT,
+                List.of(JobType.DIRECT, JobType.ARIA2C),
+                List.of(new DownloadOptionResponse(JobType.DIRECT, true, true, true, "ok")),
+                "/downloads",
+                List.of()
+        ));
+
+        mockMvc.perform(post("/api/jobs/preflight")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "url": "https://example.com/file"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recommendedType").value("DIRECT"))
+                .andExpect(jsonPath("$.sizeBytes").value(123))
+                .andExpect(jsonPath("$.supportedTypes[0]").value("DIRECT"));
+    }
+
     @Test
     void createShouldReturn201AndJobId() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true))).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -55,6 +88,43 @@ class JobControllerWebMvcTest {
                                 {
                                   "type": "YTDLP",
                                   "url": "https://example.com/video"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+    }
+
+    @Test
+    void createShouldPassStoragePath() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(true))).thenReturn(jobId);
+
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "DIRECT",
+                                  "url": "https://example.com/file",
+                                  "storagePath": "movies/2026"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+    }
+
+    @Test
+    void createShouldAllowAddingWithoutImmediateStart() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(false))).thenReturn(jobId);
+
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "DIRECT",
+                                  "url": "https://example.com/file",
+                                  "storagePath": "movies/2026",
+                                  "startImmediately": false
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -119,10 +189,40 @@ class JobControllerWebMvcTest {
                 .andExpect(jsonPath("$.message").value("Canceled by request"));
     }
 
+    @Test
+    void pauseShouldReturnUpdatedJob() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        DownloadJob paused = job(jobId, JobType.DIRECT, "https://example.com/file", JobStatus.PAUSED);
+        paused.setMessage("Paused by request");
+        when(jobService.pause(jobId)).thenReturn(paused);
+
+        mockMvc.perform(post("/api/jobs/{jobId}/pause", jobId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()))
+                .andExpect(jsonPath("$.status").value("PAUSED"))
+                .andExpect(jsonPath("$.message").value("Paused by request"));
+    }
+
+    @Test
+    void resumeShouldReturnUpdatedJob() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        DownloadJob resumed = job(jobId, JobType.DIRECT, "https://example.com/file", JobStatus.QUEUED);
+        resumed.setMessage("Resumed by request");
+        when(jobService.resume(jobId)).thenReturn(resumed);
+
+        mockMvc.perform(post("/api/jobs/{jobId}/resume", jobId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()))
+                .andExpect(jsonPath("$.status").value("QUEUED"))
+                .andExpect(jsonPath("$.message").value("Resumed by request"));
+    }
+
     private DownloadJob job(UUID id, JobType type, String url, JobStatus status) {
         DownloadJob job = new DownloadJob(id, type, url, Instant.now());
         if (status == JobStatus.RUNNING) {
             job.start(Instant.now(), "Started");
+        } else if (status == JobStatus.PAUSED) {
+            job.pause(Instant.now(), "Paused");
         } else if (status == JobStatus.CANCELED) {
             job.cancel(Instant.now(), "Canceled");
         } else if (status == JobStatus.DONE) {

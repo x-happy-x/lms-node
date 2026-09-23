@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -46,7 +47,7 @@ class HmacAuthFilterIntegrationTest {
     void shouldAllowValidSignedCreateRequest() throws Exception {
         String body = "{\"type\":\"YTDLP\",\"url\":\"https://example.com/video\"}";
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true))).thenReturn(jobId);
 
         SignedHeaders signed = sign("POST", "/api/jobs", body, CLIENT_ID, SECRET, Instant.now().getEpochSecond(), UUID.randomUUID().toString());
 
@@ -99,7 +100,7 @@ class HmacAuthFilterIntegrationTest {
     void shouldRejectReplayNonce() throws Exception {
         String body = "{\"type\":\"DIRECT\",\"url\":\"https://example.com/file\"}";
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), isNull(), eq(true))).thenReturn(jobId);
 
         String nonce = UUID.randomUUID().toString();
         long timestamp = Instant.now().getEpochSecond();

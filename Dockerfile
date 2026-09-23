@@ -1,16 +1,3 @@
-FROM maven:3.9.12-eclipse-temurin-21 AS build
-WORKDIR /build
-
-COPY pom.xml mvnw ./
-COPY .mvn .mvn
-RUN chmod +x mvnw
-
-# Cache dependencies first
-RUN ./mvnw -q -DskipTests dependency:go-offline
-
-COPY src src
-RUN ./mvnw -q -DskipTests package
-
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
@@ -20,7 +7,7 @@ RUN apt-get update \
 
 RUN mkdir -p /downloads
 
-COPY --from=build /build/target/lms-node-*.jar /app/lms-node.jar
+COPY target/lms-node-*.jar /app/lms-node.jar
 
 EXPOSE 8080
 VOLUME ["/downloads"]

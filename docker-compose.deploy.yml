@@ -1,15 +1,12 @@
 services:
   lms-node:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: lms-node:latest
-    container_name: lms-node
+    container_name: ${CONTAINER_NAME:-lms-node}
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-8080}:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local-docker}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       NODE_HMAC_SECRET: ${NODE_HMAC_SECRET:-change-me}
       NODE_MAX_PARALLEL: ${NODE_MAX_PARALLEL:-1}
       NODE_DOWNLOAD_DIR: ${NODE_DOWNLOAD_DIR:-/downloads}
