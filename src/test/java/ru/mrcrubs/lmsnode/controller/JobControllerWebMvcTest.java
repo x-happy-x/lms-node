@@ -146,6 +146,38 @@ class JobControllerWebMvcTest {
     }
 
     @Test
+    void createShouldAcceptMagnetForTorrent() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=file";
+        when(jobService.create(JobType.TORRENT, magnet, null, true)).thenReturn(jobId);
+
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "TORRENT",
+                                  "url": "%s"
+                                }
+                                """.formatted(magnet)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+    }
+
+    @Test
+    void createShouldRejectMagnetForNonTorrentType() throws Exception {
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "DIRECT",
+                                  "url": "magnet:?xt=urn:btih:abc"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", containsString("magnet")));
+    }
+
+    @Test
     void listShouldReturnJobsAndPassActiveFlag() throws Exception {
         DownloadJob job = job(UUID.randomUUID(), JobType.DIRECT, "https://example.com/file", JobStatus.RUNNING);
         when(jobService.list(true)).thenReturn(List.of(job));

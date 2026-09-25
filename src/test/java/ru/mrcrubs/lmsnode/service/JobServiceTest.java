@@ -8,6 +8,8 @@ import ru.mrcrubs.lmsnode.downloader.DownloadRequest;
 import ru.mrcrubs.lmsnode.downloader.DownloadResult;
 import ru.mrcrubs.lmsnode.downloader.Downloader;
 import ru.mrcrubs.lmsnode.downloader.ProgressUpdate;
+import org.junit.jupiter.api.io.TempDir;
+import ru.mrcrubs.lmsnode.infra.FileJobRepository;
 import ru.mrcrubs.lmsnode.infra.InMemoryJobRepository;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
@@ -221,6 +223,113 @@ class JobServiceTest {
         assertEquals(JobStatus.CANCELED, jobService.get(jobId).getStatus());
     }
 
+    @Test
+    void resumeRightAfterPauseShouldWaitForPreviousRunToStop() {
+        SlowStoppingDownloader downloader = new SlowStoppingDownloader();
+        jobService = new JobService(List.of(downloader), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.YTDLP, "https://example.com/video");
+        assertTrue(waitUntil(() -> downloader.invocations.get() == 1, 3000), "Job should start running");
+
+        jobService.pause(jobId);
+        DownloadJob resumed = assertDoesNotThrow(() -> jobService.resume(jobId));
+        assertEquals(JobStatus.QUEUED, resumed.getStatus());
+
+        assertTrue(waitUntil(() -> downloader.invocations.get() == 2
+                && jobService.get(jobId).getStatus() == JobStatus.RUNNING, 3000), "Job should run again");
+        assertEquals(1, downloader.maxConcurrent.get(), "Runs of one job must not overlap");
+
+        jobService.cancel(jobId);
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.CANCELED, 3000));
+    }
+
+    @Test
+    void pauseAndResumeShouldNotCancelJobWhenStopIsSlow() {
+        SlowStoppingDownloader downloader = new SlowStoppingDownloader();
+        jobService = new JobService(List.of(downloader), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.YTDLP, "https://example.com/video");
+        assertTrue(waitUntil(() -> downloader.invocations.get() == 1, 3000));
+
+        jobService.pause(jobId);
+        jobService.resume(jobId);
+        jobService.pause(jobId);
+
+        assertTrue(waitUntil(() -> downloader.active.get() == 0, 3000));
+        sleep(200);
+        assertEquals(JobStatus.PAUSED, jobService.get(jobId).getStatus());
+        assertEquals(1, downloader.invocations.get(), "Pending restart must be dropped by the second pause");
+    }
+
+    @Test
+    void restoreShouldContinueJobsInterruptedByRestart(@TempDir Path tempDir) {
+        Path stateFile = tempDir.resolve("jobs.json");
+        FileJobRepository before = new FileJobRepository(stateFile);
+        DownloadJob running = DownloadJob.restore(UUID.randomUUID(), JobType.DIRECT, "https://example.com/a", null,
+                JobStatus.RUNNING, java.time.Instant.now());
+        running.setPercent(40.0);
+        DownloadJob paused = DownloadJob.restore(UUID.randomUUID(), JobType.DIRECT, "https://example.com/b", null,
+                JobStatus.PAUSED, java.time.Instant.now());
+        before.save(running);
+        before.save(paused);
+
+        RecordingDownloader downloader = new RecordingDownloader(JobType.DIRECT);
+        FileJobRepository after = new FileJobRepository(stateFile);
+        jobService = new JobService(List.of(downloader), nodeProperties(), after);
+        jobService.restoreInterruptedJobs();
+
+        assertTrue(waitUntil(() -> jobService.get(running.getJobId()).getStatus() == JobStatus.DONE, 3000));
+        assertEquals(1, downloader.invocations());
+        assertEquals(JobStatus.PAUSED, jobService.get(paused.getJobId()).getStatus());
+        assertEquals(JobStatus.DONE, new FileJobRepository(stateFile).findById(running.getJobId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void restoreShouldKeepJobsPausedWhenAutoResumeIsDisabled(@TempDir Path tempDir) {
+        Path stateFile = tempDir.resolve("jobs.json");
+        DownloadJob running = DownloadJob.restore(UUID.randomUUID(), JobType.DIRECT, "https://example.com/a", null,
+                JobStatus.RUNNING, java.time.Instant.now());
+        new FileJobRepository(stateFile).save(running);
+
+        RecordingDownloader downloader = new RecordingDownloader(JobType.DIRECT);
+        NodeProperties properties = nodeProperties();
+        properties.setResumeOnStartup(false);
+        jobService = new JobService(List.of(downloader), properties, new FileJobRepository(stateFile));
+        jobService.restoreInterruptedJobs();
+
+        assertEquals(JobStatus.PAUSED, jobService.get(running.getJobId()).getStatus());
+        sleep(100);
+        assertEquals(0, downloader.invocations());
+    }
+
+    @Test
+    void moveAndDeleteShouldHandleDirectoryOutput() throws Exception {
+        DirectoryDownloader downloader = new DirectoryDownloader();
+        jobService = new JobService(List.of(downloader), nodeProperties(), new InMemoryJobRepository());
+
+        UUID jobId = jobService.create(JobType.TORRENT, "magnet:?xt=urn:btih:abc");
+        assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.DONE, 3000));
+        assertEquals(4L, jobService.get(jobId).getOutputSizeBytes());
+
+        String subDir = "moved-" + jobId;
+        DownloadJob moved = jobService.moveJobOutput(jobId, subDir);
+        Path movedPath = Path.of(moved.getOutputPath());
+        assertTrue(Files.isDirectory(movedPath));
+        assertTrue(Files.exists(movedPath.resolve("a.txt")));
+
+        jobService.deleteJobOutput(jobId);
+        assertFalse(Files.exists(movedPath));
+        Files.deleteIfExists(movedPath.getParent());
+    }
+
+    private void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private NodeProperties nodeProperties() {
         NodeProperties properties = new NodeProperties();
         properties.setMaxParallel(1);
@@ -269,6 +378,55 @@ class JobServiceTest {
             Files.writeString(output, "ok");
             progressConsumer.accept(new ProgressUpdate(50.0, null, 1000L, 1L, "half"));
             return new DownloadResult(output.toString(), "done");
+        }
+    }
+
+    /**
+     * Like an external tool saving its state: exits 300ms after being asked to stop.
+     */
+    private static final class SlowStoppingDownloader implements Downloader {
+        private final AtomicInteger invocations = new AtomicInteger();
+        private final AtomicInteger active = new AtomicInteger();
+        private final AtomicInteger maxConcurrent = new AtomicInteger();
+
+        @Override
+        public JobType id() {
+            return JobType.YTDLP;
+        }
+
+        @Override
+        public DownloadResult download(DownloadRequest request,
+                                       DownloadExecutionContext context,
+                                       java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
+            invocations.incrementAndGet();
+            maxConcurrent.accumulateAndGet(active.incrementAndGet(), Math::max);
+            try {
+                while (!context.isCanceled()) {
+                    Thread.sleep(10);
+                }
+                Thread.sleep(300);
+                throw new CancellationException("stopped");
+            } finally {
+                active.decrementAndGet();
+            }
+        }
+    }
+
+    private static final class DirectoryDownloader implements Downloader {
+        @Override
+        public JobType id() {
+            return JobType.TORRENT;
+        }
+
+        @Override
+        public DownloadResult download(DownloadRequest request,
+                                       DownloadExecutionContext context,
+                                       java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
+            Path dir = request.downloadDir().resolve("torrent-" + request.jobId());
+            Files.createDirectories(dir.resolve("sub"));
+            Files.writeString(dir.resolve("a.txt"), "ab");
+            Files.writeString(dir.resolve("sub/b.txt"), "cd");
+            return new DownloadResult(dir.toString(), "done");
         }
     }
 

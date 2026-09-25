@@ -4,11 +4,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import ru.mrcrubs.lmsnode.model.JobType;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,41 +33,71 @@ public class YtDlpDownloader implements Downloader {
     @Override
     public DownloadResult download(DownloadRequest request,
                                    DownloadExecutionContext context,
-                                   java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
+                                   Consumer<ProgressUpdate> progressConsumer) throws Exception {
+        Path filesList = Files.createTempFile("lms-node-ytdlp-" + request.jobId(), ".txt");
+        try {
+            List<String> command = buildCommand(request, filesList);
+            AtomicReference<String> lastLine = new AtomicReference<>();
+            AtomicReference<String> lastError = new AtomicReference<>();
+            int exitCode = ExternalProcess.run(command, request.downloadDir(), context, line -> {
+                if (!line.startsWith("[info] Writing '%(filepath)s'")) {
+                    lastLine.set(line);
+                }
+                if (line.startsWith("ERROR:")) {
+                    lastError.set(line);
+                }
+                progressConsumer.accept(parseProgress(line));
+            });
+            if (exitCode != 0) {
+                String detail = lastError.get() != null ? lastError.get() : lastLine.get();
+                throw new IllegalStateException("yt-dlp exited with code " + exitCode + (detail == null ? "" : ": " + detail));
+            }
+
+            String outputPath = readLastExistingPath(filesList);
+            return new DownloadResult(outputPath, lastLine.get() == null ? "yt-dlp finished" : lastLine.get());
+        } finally {
+            Files.deleteIfExists(filesList);
+        }
+    }
+
+    /**
+     * {@code --continue} keeps and reuses {@code .part} files (the process is stopped with
+     * SIGTERM on pause, so they survive), and the final paths are written to a side file
+     * so the job gets an {@code outputPath} like DIRECT downloads do.
+     */
+    List<String> buildCommand(DownloadRequest request, Path filesList) {
         List<String> command = new ArrayList<>();
         command.add(binary);
         command.add("--newline");
+        command.add("--continue");
+        command.add("--retries");
+        command.add("20");
+        command.add("--fragment-retries");
+        command.add("20");
+        command.add("--socket-timeout");
+        command.add("60");
+        command.add("--print-to-file");
+        command.add("after_move:filepath");
+        command.add(filesList.toString());
         command.add("-P");
         command.add(request.downloadDir().toString());
         command.add(request.url());
+        return command;
+    }
 
-        Process process = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .start();
-
-        context.registerCancelAction(() -> process.destroyForcibly());
-
-        String lastLine = null;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                lastLine = line;
-                progressConsumer.accept(parseProgress(line));
-                if (context.isCanceled()) {
-                    throw new CancellationException("yt-dlp canceled");
+    private String readLastExistingPath(Path filesList) {
+        try {
+            List<String> lines = Files.readAllLines(filesList);
+            for (int i = lines.size() - 1; i >= 0; i--) {
+                String candidate = lines.get(i).strip();
+                if (!candidate.isEmpty() && Files.exists(Path.of(candidate))) {
+                    return candidate;
                 }
             }
+        } catch (Exception ignored) {
+            // Output path is only a hint.
         }
-
-        int exitCode = process.waitFor();
-        if (context.isCanceled()) {
-            throw new CancellationException("yt-dlp canceled");
-        }
-        if (exitCode != 0) {
-            throw new IllegalStateException("yt-dlp exited with code " + exitCode);
-        }
-
-        return new DownloadResult(null, lastLine == null ? "yt-dlp finished" : lastLine);
+        return null;
     }
 
     ProgressUpdate parseProgress(String line) {
