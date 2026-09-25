@@ -281,7 +281,9 @@ class JobServiceTest {
         assertTrue(waitUntil(() -> jobService.get(running.getJobId()).getStatus() == JobStatus.DONE, 3000));
         assertEquals(1, downloader.invocations());
         assertEquals(JobStatus.PAUSED, jobService.get(paused.getJobId()).getStatus());
-        assertEquals(JobStatus.DONE, new FileJobRepository(stateFile).findById(running.getJobId()).orElseThrow().getStatus());
+        assertTrue(waitUntil(() -> new FileJobRepository(stateFile)
+                .findById(running.getJobId()).orElseThrow().getStatus() == JobStatus.DONE, 3000),
+                "Completion must be persisted after the worker finishes");
     }
 
     @Test
@@ -309,7 +311,8 @@ class JobServiceTest {
 
         UUID jobId = jobService.create(JobType.TORRENT, "magnet:?xt=urn:btih:abc");
         assertTrue(waitUntil(() -> jobService.get(jobId).getStatus() == JobStatus.DONE, 3000));
-        assertEquals(4L, jobService.get(jobId).getOutputSizeBytes());
+        assertTrue(waitUntil(() -> Long.valueOf(4L).equals(jobService.get(jobId).getOutputSizeBytes()), 3000),
+                "Output metadata must be populated after completion");
 
         String subDir = "moved-" + jobId;
         DownloadJob moved = jobService.moveJobOutput(jobId, subDir);
