@@ -104,4 +104,16 @@ class Aria2OutputTest {
         assertTrue(command.contains("--listen-port=6881"));
         assertEquals("magnet:?xt=urn:btih:abc", command.getLast());
     }
+
+    @Test
+    void speedLimitIsPassedToTools() {
+        java.util.UUID id = java.util.UUID.randomUUID();
+        DownloadRequest limited = new DownloadRequest(id, null, "magnet:?xt=urn:btih:abc", Path.of("/downloads"), 500_000L);
+        assertTrue(new TorrentDownloader("aria2c", 0, "").buildCommand(limited).contains("--max-download-limit=500000"));
+
+        YtDlpDownloader ytdlp = new YtDlpDownloader("yt-dlp");
+        List<String> command = ytdlp.buildCommand(limited, Path.of("/tmp/files.txt"));
+        assertEquals("500000", command.get(command.indexOf("--limit-rate") + 1));
+        assertFalse(ytdlp.buildCommand(new DownloadRequest(id, null, "https://x", Path.of("/d")), Path.of("/tmp/f")).contains("--limit-rate"));
+    }
 }

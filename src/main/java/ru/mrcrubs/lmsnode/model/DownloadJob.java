@@ -19,6 +19,8 @@ public class DownloadJob {
     private volatile Instant finishedAt;
     private volatile String outputPath;
     private volatile Long outputSizeBytes;
+    /** Download speed limit in bytes per second; null = unlimited. */
+    private volatile Long maxSpeedBytes;
 
     public DownloadJob(UUID jobId, JobType type, String url, String storagePath, Instant createdAt) {
         this.jobId = jobId;
@@ -137,6 +139,14 @@ public class DownloadJob {
 
     public void setOutputSizeBytes(Long outputSizeBytes) {
         this.outputSizeBytes = outputSizeBytes;
+    }
+
+    public Long getMaxSpeedBytes() {
+        return maxSpeedBytes;
+    }
+
+    public void setMaxSpeedBytes(Long maxSpeedBytes) {
+        this.maxSpeedBytes = maxSpeedBytes == null || maxSpeedBytes <= 0 ? null : maxSpeedBytes;
     }
 
     public boolean isTerminal() {

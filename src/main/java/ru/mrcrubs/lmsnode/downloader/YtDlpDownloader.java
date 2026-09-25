@@ -79,6 +79,10 @@ public class YtDlpDownloader implements Downloader {
         command.add("--print-to-file");
         command.add("after_move:filepath");
         command.add(filesList.toString());
+        if (request.hasSpeedLimit()) {
+            command.add("--limit-rate");
+            command.add(String.valueOf(request.maxSpeedBytes()));
+        }
         command.add("-P");
         command.add(request.downloadDir().toString());
         command.add(request.url());

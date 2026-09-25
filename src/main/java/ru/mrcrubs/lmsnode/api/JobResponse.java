@@ -22,7 +22,8 @@ public record JobResponse(
         Instant startedAt,
         Instant finishedAt,
         String outputPath,
-        Long outputSizeBytes
+        Long outputSizeBytes,
+        Long maxSpeedBytes
 ) {
     public static JobResponse from(DownloadJob job) {
         return new JobResponse(
@@ -40,7 +41,8 @@ public record JobResponse(
                 job.getStartedAt(),
                 job.getFinishedAt(),
                 job.getOutputPath(),
-                job.getOutputSizeBytes()
+                job.getOutputSizeBytes(),
+                job.getMaxSpeedBytes()
         );
     }
 }
