@@ -33,6 +33,16 @@ public class DownloadJob {
         this(jobId, type, url, null, createdAt);
     }
 
+    /**
+     * Rebuilds a job from persisted state. Progress/timestamps are restored through setters.
+     */
+    public static DownloadJob restore(UUID jobId, JobType type, String url, String storagePath,
+                                      JobStatus status, Instant createdAt) {
+        DownloadJob job = new DownloadJob(jobId, type, url, storagePath, createdAt);
+        job.status = status == null ? JobStatus.QUEUED : status;
+        return job;
+    }
+
     public UUID getJobId() {
         return jobId;
     }
@@ -159,6 +169,8 @@ public class DownloadJob {
         }
         status = JobStatus.PAUSED;
         message = pauseMessage;
+        speedBytes = null;
+        etaSeconds = null;
         // Keep startedAt when pausing a running job.
         if (finishedAt != null) {
             finishedAt = null;
@@ -188,13 +200,33 @@ public class DownloadJob {
         return true;
     }
 
+    /**
+     * Puts a job that was active when the node stopped back into the queue.
+     */
+    public boolean requeueAfterRestart(String requeueMessage) {
+        if (status != JobStatus.RUNNING && status != JobStatus.QUEUED) {
+            return false;
+        }
+        status = JobStatus.QUEUED;
+        message = requeueMessage;
+        speedBytes = null;
+        etaSeconds = null;
+        return true;
+    }
+
+    /**
+     * Completes the job. A job paused (or paused and resumed) while its download was
+     * already finishing is completed too: the file is there, restarting would be wasteful.
+     */
     public boolean complete(Instant at, String doneMessage, String finalOutputPath) {
-        if (status != JobStatus.RUNNING) {
+        if (status != JobStatus.RUNNING && status != JobStatus.PAUSED && status != JobStatus.QUEUED) {
             return false;
         }
         status = JobStatus.DONE;
         finishedAt = at;
         percent = 100.0;
+        speedBytes = null;
+        etaSeconds = 0L;
         message = doneMessage;
         outputPath = finalOutputPath;
         return true;
@@ -207,6 +239,8 @@ public class DownloadJob {
         status = JobStatus.ERROR;
         finishedAt = at;
         message = errorMessage;
+        speedBytes = null;
+        etaSeconds = null;
         return true;
     }
 }
