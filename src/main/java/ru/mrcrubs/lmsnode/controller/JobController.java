@@ -18,6 +18,7 @@ import ru.mrcrubs.lmsnode.api.JobPreflightRequest;
 import ru.mrcrubs.lmsnode.api.JobPreflightResponse;
 import ru.mrcrubs.lmsnode.api.JobResponse;
 import ru.mrcrubs.lmsnode.api.MoveJobOutputRequest;
+import ru.mrcrubs.lmsnode.api.SpeedLimitRequest;
 import ru.mrcrubs.lmsnode.service.DownloadPreflightService;
 import ru.mrcrubs.lmsnode.service.PreviewService;
 import ru.mrcrubs.lmsnode.service.JobService;
@@ -55,7 +56,8 @@ public class JobController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CreateJobResponse create(@Valid @RequestBody CreateJobRequest request) {
-        UUID jobId = jobService.create(request.type(), request.url(), request.storagePath(), request.shouldStartImmediately());
+        UUID jobId = jobService.create(request.type(), request.url(), request.storagePath(),
+                request.shouldStartImmediately(), request.maxSpeedBytes());
         return new CreateJobResponse(jobId);
     }
 
@@ -87,6 +89,11 @@ public class JobController {
     @PostMapping("/{jobId}/retry")
     public JobResponse retry(@PathVariable UUID jobId) {
         return JobResponse.from(jobService.retry(jobId));
+    }
+
+    @PostMapping("/{jobId}/speed")
+    public JobResponse speed(@PathVariable UUID jobId, @Valid @RequestBody SpeedLimitRequest request) {
+        return JobResponse.from(jobService.setSpeedLimit(jobId, request.maxSpeedBytes()));
     }
 
     @PostMapping("/{jobId}/move")

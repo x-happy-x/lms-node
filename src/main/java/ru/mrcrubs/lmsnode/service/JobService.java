@@ -91,10 +91,15 @@ public class JobService {
     }
 
     public UUID create(JobType type, String url, String storagePath, boolean startImmediately) {
+        return create(type, url, storagePath, startImmediately, null);
+    }
+
+    public UUID create(JobType type, String url, String storagePath, boolean startImmediately, Long maxSpeedBytes) {
         String normalizedStoragePath = normalizeStoragePath(storagePath);
         resolveDownloadDir(normalizedStoragePath);
         UUID jobId = UUID.randomUUID();
         DownloadJob job = new DownloadJob(jobId, type, url, normalizedStoragePath, Instant.now());
+        job.setMaxSpeedBytes(maxSpeedBytes);
         if (!startImmediately) {
             job.pause(Instant.now(), "Added without start");
         }
@@ -196,6 +201,37 @@ public class JobService {
         }
         jobRepository.save(job);
         log.info("Job retried: id={}", jobId);
+        return job;
+    }
+
+    /**
+     * Changes the job's speed limit (null or 0 = unlimited). A running HTTP download follows
+     * it immediately; external tools only read it at start, so they are restarted and
+     * continue from their partial files.
+     */
+    public DownloadJob setSpeedLimit(UUID jobId, Long maxSpeedBytes) {
+        DownloadJob job = get(jobId);
+        boolean restart = false;
+        synchronized (job) {
+            job.setMaxSpeedBytes(maxSpeedBytes);
+            DownloadExecutionContext context = executions.get(jobId);
+            if (context != null && job.getStatus() == JobStatus.RUNNING) {
+                if (job.getType() == JobType.DIRECT) {
+                    context.setSpeedLimit(job.getMaxSpeedBytes());
+                } else {
+                    restart = true;
+                }
+            }
+        }
+        jobRepository.save(job);
+        if (restart) {
+            pause(jobId);
+            resume(jobId);
+            synchronized (job) {
+                job.setMessage(sanitizeMessage("Restarting with the new speed limit"));
+            }
+        }
+        log.info("Job speed limit set: id={}, maxSpeedBytes={}, restarted={}", jobId, job.getMaxSpeedBytes(), restart);
         return job;
     }
 
@@ -404,6 +440,7 @@ public class JobService {
         }
 
         DownloadExecutionContext context = new DownloadExecutionContext();
+        context.setSpeedLimit(job.getMaxSpeedBytes());
         synchronized (job) {
             if (executions.putIfAbsent(job.getJobId(), context) != null) {
                 // Previous run is still stopping; it restarts the job when it exits.
@@ -422,7 +459,8 @@ public class JobService {
         try {
             Path jobDownloadDir = resolveDownloadDir(job.getStoragePath());
             Files.createDirectories(jobDownloadDir);
-            DownloadRequest request = new DownloadRequest(job.getJobId(), job.getType(), job.getUrl(), jobDownloadDir);
+            DownloadRequest request = new DownloadRequest(job.getJobId(), job.getType(), job.getUrl(), jobDownloadDir,
+                    job.getMaxSpeedBytes());
             DownloadResult result = downloader.download(request, context, update -> applyProgress(job, context, update));
 
             synchronized (job) {

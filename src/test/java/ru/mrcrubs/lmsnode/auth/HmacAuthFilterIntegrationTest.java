@@ -47,7 +47,7 @@ class HmacAuthFilterIntegrationTest {
     void shouldAllowValidSignedCreateRequest() throws Exception {
         String body = "{\"type\":\"YTDLP\",\"url\":\"https://example.com/video\"}";
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true), isNull())).thenReturn(jobId);
 
         SignedHeaders signed = sign("POST", "/api/jobs", body, CLIENT_ID, SECRET, Instant.now().getEpochSecond(), UUID.randomUUID().toString());
 
@@ -100,7 +100,7 @@ class HmacAuthFilterIntegrationTest {
     void shouldRejectReplayNonce() throws Exception {
         String body = "{\"type\":\"DIRECT\",\"url\":\"https://example.com/file\"}";
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), isNull(), eq(true))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), isNull(), eq(true), isNull())).thenReturn(jobId);
 
         String nonce = UUID.randomUUID().toString();
         long timestamp = Instant.now().getEpochSecond();

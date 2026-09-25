@@ -91,6 +91,9 @@ public class TorrentDownloader implements Downloader {
         command.add("--enable-dht=true");
         command.add("--bt-enable-lpd=true");
         command.add("--enable-peer-exchange=true");
+        if (request.hasSpeedLimit()) {
+            command.add("--max-download-limit=" + request.maxSpeedBytes());
+        }
         if (listenPort != null && !listenPort.isBlank()) {
             command.add("--listen-port=" + listenPort);
             command.add("--dht-listen-port=" + listenPort);

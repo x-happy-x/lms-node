@@ -117,6 +117,7 @@ Returns:
 - `message`
 - `createdAt`, `startedAt`, `finishedAt`
 - `outputPath`
+- `maxSpeedBytes`
 
 ### Cancel job
 
@@ -143,6 +144,14 @@ stays `QUEUED` ("Waiting for previous run to stop") and starts as soon as it exi
 `POST /api/jobs/{jobId}/retry`
 
 Re-queues an `ERROR` or `CANCELED` job. It continues from the partial data too.
+
+### Speed limit
+
+`maxSpeedBytes` in `POST /api/jobs` sets a per-job limit in bytes per second.
+`POST /api/jobs/{jobId}/speed` with `{"maxSpeedBytes": 1048576}` changes it (`null`/`0` = unlimited):
+HTTP (`DIRECT`) downloads follow it immediately; aria2c, torrent and yt-dlp jobs restart and
+continue from their partial files (`--max-download-limit` / `--limit-rate`). The limit is kept
+across restarts and shown in job responses.
 
 ### Job output
 

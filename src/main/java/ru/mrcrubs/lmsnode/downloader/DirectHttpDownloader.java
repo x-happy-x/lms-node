@@ -198,8 +198,9 @@ public class DirectHttpDownloader implements Downloader {
             activeInput.set(inputStream);
             activeOutput.set(outputStream);
 
+            Throttle throttle = new Throttle(context);
             int read;
-            while ((read = inputStream.read(buffer)) != -1) {
+            while ((read = inputStream.read(buffer, 0, throttle.chunkSize(buffer.length))) != -1) {
                 lastReadAt.set(System.nanoTime());
                 if (context.isCanceled()) {
                     throw new CancellationException("Download canceled");
@@ -221,6 +222,9 @@ public class DirectHttpDownloader implements Downloader {
                     speedWindowBytes = 0L;
                     speedWindowStart = now;
                 }
+                throttle.onBytes(read);
+                // A throttle pause is not a stalled connection.
+                lastReadAt.set(System.nanoTime());
             }
         } catch (IOException ex) {
             if (context.isCanceled()) {

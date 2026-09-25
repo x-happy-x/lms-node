@@ -322,6 +322,33 @@ class JobServiceTest {
         Files.deleteIfExists(movedPath.getParent());
     }
 
+    @Test
+    void speedLimitIsLiveForDirectAndRestartsToolJobs(@TempDir Path tempDir) {
+        SlowStoppingDownloader tool = new SlowStoppingDownloader();
+        LimitObservingDownloader direct = new LimitObservingDownloader();
+        FileJobRepository repository = new FileJobRepository(tempDir.resolve("jobs.json"));
+        NodeProperties properties = nodeProperties();
+        properties.setMaxParallel(2);
+        jobService = new JobService(List.of(tool, direct), properties, repository);
+
+        UUID directId = jobService.create(JobType.DIRECT, "https://example.com/a.bin", null, true, 1_000_000L);
+        assertTrue(waitUntil(() -> direct.lastLimit.get() == 1_000_000L, 3000), "initial limit reaches the downloader");
+        jobService.setSpeedLimit(directId, 250_000L);
+        assertTrue(waitUntil(() -> direct.lastLimit.get() == 250_000L, 3000), "running HTTP download follows the change");
+        assertEquals(1, direct.invocations.get(), "HTTP download is not restarted");
+
+        UUID toolId = jobService.create(JobType.YTDLP, "https://example.com/video");
+        assertTrue(waitUntil(() -> tool.invocations.get() == 1, 3000));
+        jobService.setSpeedLimit(toolId, 500_000L);
+        assertTrue(waitUntil(() -> tool.invocations.get() == 2 && jobService.get(toolId).getStatus() == JobStatus.RUNNING, 3000),
+                "tool job restarts to pick up the limit");
+        assertEquals(1, tool.maxConcurrent.get());
+
+        jobService.setSpeedLimit(toolId, 0L);
+        assertNull(jobService.get(toolId).getMaxSpeedBytes(), "0 removes the limit");
+        assertEquals(250_000L, new FileJobRepository(tempDir.resolve("jobs.json")).findById(directId).orElseThrow().getMaxSpeedBytes());
+    }
+
     private void sleep(long millis) {
         try {
             Thread.sleep(millis);
@@ -409,6 +436,29 @@ class JobServiceTest {
             } finally {
                 active.decrementAndGet();
             }
+        }
+    }
+
+    /** Reports the context's live speed limit until canceled. */
+    private static final class LimitObservingDownloader implements Downloader {
+        private final AtomicInteger invocations = new AtomicInteger();
+        private final java.util.concurrent.atomic.AtomicLong lastLimit = new java.util.concurrent.atomic.AtomicLong(-1);
+
+        @Override
+        public JobType id() {
+            return JobType.DIRECT;
+        }
+
+        @Override
+        public DownloadResult download(DownloadRequest request,
+                                       DownloadExecutionContext context,
+                                       java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
+            invocations.incrementAndGet();
+            while (!context.isCanceled()) {
+                lastLimit.set(context.speedLimit());
+                Thread.sleep(10);
+            }
+            throw new CancellationException("stopped");
         }
     }
 

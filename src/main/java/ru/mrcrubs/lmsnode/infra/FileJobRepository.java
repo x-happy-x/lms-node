@@ -95,13 +95,14 @@ public class FileJobRepository extends InMemoryJobRepository {
                        Instant startedAt,
                        Instant finishedAt,
                        String outputPath,
-                       Long outputSizeBytes) {
+                       Long outputSizeBytes,
+                       Long maxSpeedBytes) {
         // Fields are volatile; no job lock here, callers may already hold other jobs' locks.
         static JobSnapshot from(DownloadJob job) {
             return new JobSnapshot(job.getJobId(), job.getType(), job.getUrl(), job.getStoragePath(),
                     job.getStatus(), job.getPercent(), job.getTotalBytes(), job.getMessage(),
                     job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(),
-                    job.getOutputPath(), job.getOutputSizeBytes());
+                    job.getOutputPath(), job.getOutputSizeBytes(), job.getMaxSpeedBytes());
         }
 
         DownloadJob toJob() {
@@ -114,6 +115,7 @@ public class FileJobRepository extends InMemoryJobRepository {
             job.setFinishedAt(finishedAt);
             job.setOutputPath(outputPath);
             job.setOutputSizeBytes(outputSizeBytes);
+            job.setMaxSpeedBytes(maxSpeedBytes);
             return job;
         }
     }

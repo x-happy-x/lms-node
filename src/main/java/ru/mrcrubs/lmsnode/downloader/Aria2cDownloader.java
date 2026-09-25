@@ -32,6 +32,9 @@ public class Aria2cDownloader implements Downloader {
         command.add("--follow-torrent=false");
         command.add("--max-tries=10");
         command.add("--retry-wait=10");
+        if (request.hasSpeedLimit()) {
+            command.add("--max-download-limit=" + request.maxSpeedBytes());
+        }
         command.add(request.url());
 
         Aria2Run run = Aria2Run.execute(command, request.downloadDir(), context, progressConsumer);
