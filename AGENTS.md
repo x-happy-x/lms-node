@@ -36,7 +36,8 @@ This repository contains the **Node Agent** (remote worker) for a home download 
 - No node-to-router callbacks, polling channels, or websockets.
 - No heavy persistence requirement for MVP (in-memory storage is acceptable).
   - Persistence (SQLite/PostgreSQL) can be added later without changing API shape.
-- No end-user file streaming through the node API.
+- No direct end-user access: finished files and thumbnails are served only to the router
+  (`GET /api/jobs/{id}/file` with Range, `/preview`), which streams them to LAN clients.
 
 ---
 
@@ -51,7 +52,7 @@ This repository contains the **Node Agent** (remote worker) for a home download 
 
 - `yt-dlp`
 - `aria2c`
-- Optional later: `ffmpeg`
+- `ffmpeg` (optional): thumbnails for image/video outputs
 
 ### Storage
 
@@ -75,7 +76,7 @@ Request body example:
 
 ```json
 {
-  "type": "YTDLP", // DIRECT | YTDLP | ARIA2C
+  "type": "YTDLP", // DIRECT | YTDLP | ARIA2C | TORRENT (magnet:? or .torrent link)
   "url": "https://..."
 }
 ```
@@ -112,9 +113,9 @@ Best-effort behavior:
 ## Job Model (Minimum)
 
 - `jobId: UUID`
-- `type: DIRECT | YTDLP | ARIA2C`
+- `type: DIRECT | YTDLP | ARIA2C | TORRENT`
 - `url: string`
-- `status: QUEUED | RUNNING | DONE | ERROR | CANCELED`
+- `status: QUEUED | PAUSED | RUNNING | DONE | ERROR | CANCELED`
 - progress (optional but recommended):
   - `percent: number?`
   - `speedBytes: number?`

@@ -4,19 +4,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import ru.mrcrubs.lmsnode.model.JobType;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CancellationException;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.function.Consumer;
 
 @Component
 public class Aria2cDownloader implements Downloader {
-    private static final Pattern PERCENT_PATTERN = Pattern.compile("\\((\\d{1,3})%\\)");
-    private static final Pattern SPEED_PATTERN = Pattern.compile("DL:([0-9.]+[KMG]?i?B)", Pattern.CASE_INSENSITIVE);
-
     private final String binary;
 
     public Aria2cDownloader(@Value("${node.tools.aria2c:aria2c}") String binary) {
@@ -31,83 +26,85 @@ public class Aria2cDownloader implements Downloader {
     @Override
     public DownloadResult download(DownloadRequest request,
                                    DownloadExecutionContext context,
-                                   java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
-        List<String> command = new ArrayList<>();
-        command.add(binary);
-        command.add("--console-log-level=warn");
-        command.add("--summary-interval=1");
-        command.add("--dir=" + request.downloadDir());
+                                   Consumer<ProgressUpdate> progressConsumer) throws Exception {
+        List<String> command = new ArrayList<>(commonArgs(binary, request.downloadDir()));
+        // Torrents are a separate job type; here a .torrent link is just a file.
+        command.add("--follow-torrent=false");
+        command.add("--max-tries=10");
+        command.add("--retry-wait=10");
         command.add(request.url());
 
-        Process process = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .start();
-
-        context.registerCancelAction(() -> process.destroyForcibly());
-
-        String lastLine = null;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                lastLine = line;
-                progressConsumer.accept(parseProgress(line));
-                if (context.isCanceled()) {
-                    throw new CancellationException("aria2c canceled");
-                }
-            }
+        Aria2Run run = Aria2Run.execute(command, request.downloadDir(), context, progressConsumer);
+        if (run.exitCode() != 0) {
+            throw new IllegalStateException(run.failureMessage());
         }
+        String outputPath = run.results().stream()
+                .filter(Aria2Output.Result::ok)
+                .map(Aria2Output.Result::path)
+                .filter(path -> Files.exists(Path.of(path)))
+                .reduce((first, second) -> second)
+                .orElse(null);
+        progressConsumer.accept(new ProgressUpdate(100.0, null, null, 0L, "aria2c download finished"));
+        return new DownloadResult(outputPath, "aria2c download finished");
+    }
 
-        int exitCode = process.waitFor();
-        if (context.isCanceled()) {
-            throw new CancellationException("aria2c canceled");
-        }
-        if (exitCode != 0) {
-            throw new IllegalStateException("aria2c exited with code " + exitCode);
-        }
-
-        return new DownloadResult(null, lastLine == null ? "aria2c finished" : lastLine);
+    /**
+     * Options that make aria2c resumable after pause, cancel+retry or node restart:
+     * it continues from the existing file and its {@code .aria2} control file instead of
+     * starting over or writing {@code file.1}. The control file is saved on SIGTERM and every 10s.
+     */
+    static List<String> commonArgs(String binary, Path downloadDir) {
+        return List.of(
+                binary,
+                "--dir=" + downloadDir,
+                "--continue=true",
+                // Resume when the server supports ranges, otherwise start the file over instead of failing.
+                "--always-resume=false",
+                "--max-resume-failure-tries=0",
+                "--auto-file-renaming=false",
+                "--allow-overwrite=false",
+                "--file-allocation=none",
+                "--auto-save-interval=10",
+                "--console-log-level=warn",
+                "--summary-interval=1",
+                "--show-console-readout=true",
+                "--enable-color=false"
+        );
     }
 
     ProgressUpdate parseProgress(String line) {
-        Matcher percentMatcher = PERCENT_PATTERN.matcher(line);
-        Matcher speedMatcher = SPEED_PATTERN.matcher(line);
-
-        Double percent = percentMatcher.find() ? Double.valueOf(percentMatcher.group(1)) : null;
-        Long speedBytes = speedMatcher.find() ? parseBytes(speedMatcher.group(1)) : null;
-
-        return new ProgressUpdate(percent, null, speedBytes, null, line);
+        return Aria2Output.parseProgress(line);
     }
 
     Long parseBytes(String value) {
-        String normalized = value.trim().toUpperCase();
-        long multiplier = 1;
+        return Aria2Output.parseBytes(value);
+    }
 
-        if (normalized.endsWith("KIB")) {
-            multiplier = 1024L;
-            normalized = normalized.substring(0, normalized.length() - 3);
-        } else if (normalized.endsWith("MIB")) {
-            multiplier = 1024L * 1024L;
-            normalized = normalized.substring(0, normalized.length() - 3);
-        } else if (normalized.endsWith("GIB")) {
-            multiplier = 1024L * 1024L * 1024L;
-            normalized = normalized.substring(0, normalized.length() - 3);
-        } else if (normalized.endsWith("KB")) {
-            multiplier = 1000L;
-            normalized = normalized.substring(0, normalized.length() - 2);
-        } else if (normalized.endsWith("MB")) {
-            multiplier = 1000L * 1000L;
-            normalized = normalized.substring(0, normalized.length() - 2);
-        } else if (normalized.endsWith("GB")) {
-            multiplier = 1000L * 1000L * 1000L;
-            normalized = normalized.substring(0, normalized.length() - 2);
-        } else if (normalized.endsWith("B")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
+    /**
+     * One aria2c process run: progress is forwarded, all output is kept for the result table.
+     */
+    record Aria2Run(int exitCode, List<String> output, List<Aria2Output.Result> results) {
+        static Aria2Run execute(List<String> command,
+                                Path workDir,
+                                DownloadExecutionContext context,
+                                Consumer<ProgressUpdate> progressConsumer) throws Exception {
+            List<String> output = new ArrayList<>();
+            int exitCode = ExternalProcess.run(command, workDir, context, line -> {
+                if (Aria2Output.isReadout(line)) {
+                    progressConsumer.accept(Aria2Output.parseProgress(line));
+                } else {
+                    output.add(line);
+                }
+            });
+            return new Aria2Run(exitCode, output, Aria2Output.parseResults(output));
         }
 
-        try {
-            return (long) (Double.parseDouble(normalized) * multiplier);
-        } catch (NumberFormatException ex) {
-            return null;
+        String failureMessage() {
+            String detail = output.stream()
+                    .filter(line -> line.contains("[ERROR]") || line.startsWith("Exception:") || line.contains("errorCode="))
+                    .reduce((first, second) -> second)
+                    .orElse(null);
+            return "aria2c exited with code " + exitCode + (detail == null ? "" : ": " + detail.strip());
         }
     }
 }

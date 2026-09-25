@@ -1,5 +1,6 @@
 package ru.mrcrubs.lmsnode.service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.OptionalLong;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -44,15 +46,48 @@ public class JobService {
     private final JobRepository jobRepository;
     private final Map<UUID, DownloadExecutionContext> executions = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastProgressUpdateMillis = new ConcurrentHashMap<>();
+    /**
+     * Jobs resumed/retried while their previous run was still stopping; started once it exits.
+     */
+    private final Set<UUID> pendingRestarts = ConcurrentHashMap.newKeySet();
     private final Map<JobType, Downloader> downloaders;
     private final ExecutorService executor;
     private final Path baseDownloadDir;
+    private final boolean resumeOnStartup;
+    private volatile boolean shuttingDown;
 
     public JobService(List<Downloader> downloaderList, NodeProperties nodeProperties, JobRepository jobRepository) {
         this.jobRepository = jobRepository;
         this.downloaders = downloaderList.stream().collect(Collectors.toUnmodifiableMap(Downloader::id, Function.identity()));
         this.executor = Executors.newFixedThreadPool(Math.max(1, nodeProperties.getMaxParallel()));
         this.baseDownloadDir = Path.of(nodeProperties.getDownloadDir()).toAbsolutePath().normalize();
+        this.resumeOnStartup = nodeProperties.isResumeOnStartup();
+    }
+
+    /**
+     * Jobs loaded from persisted state that were queued or running when the node stopped
+     * are queued again; downloaders continue from their partial files.
+     */
+    @PostConstruct
+    public void restoreInterruptedJobs() {
+        List<DownloadJob> interrupted = jobRepository.findAll().stream()
+                .filter(job -> job.getStatus() == JobStatus.RUNNING || job.getStatus() == JobStatus.QUEUED)
+                .sorted(Comparator.comparing(DownloadJob::getCreatedAt))
+                .toList();
+        for (DownloadJob job : interrupted) {
+            synchronized (job) {
+                if (resumeOnStartup) {
+                    job.requeueAfterRestart("Resumed after node restart");
+                } else {
+                    job.pause(Instant.now(), "Paused by node restart");
+                }
+            }
+            jobRepository.save(job);
+            if (resumeOnStartup) {
+                executor.submit(() -> runJob(job));
+            }
+            log.info("Job restored after restart: id={}, status={}", job.getJobId(), job.getStatus());
+        }
     }
 
     public UUID create(JobType type, String url, String storagePath, boolean startImmediately) {
@@ -105,11 +140,13 @@ public class JobService {
             canceled = job.cancel(Instant.now(), "Canceled by request");
         }
 
+        pendingRestarts.remove(jobId);
         DownloadExecutionContext context = executions.get(jobId);
         if (context != null) {
             context.cancel();
         }
         if (canceled) {
+            jobRepository.save(job);
             log.info("Job canceled: id={}", jobId);
         }
 
@@ -126,10 +163,12 @@ public class JobService {
             throw new IllegalStateException("Job cannot be paused in state " + job.getStatus());
         }
 
+        pendingRestarts.remove(jobId);
         DownloadExecutionContext context = executions.get(jobId);
         if (context != null) {
             context.cancel();
         }
+        jobRepository.save(job);
         log.info("Job paused: id={}", jobId);
         return job;
     }
@@ -137,14 +176,12 @@ public class JobService {
     public DownloadJob resume(UUID jobId) {
         DownloadJob job = get(jobId);
         synchronized (job) {
-            if (executions.containsKey(jobId)) {
-                throw new IllegalStateException("Job is still stopping, retry resume shortly");
-            }
             if (!job.resume(Instant.now(), "Resumed by request")) {
                 throw new IllegalStateException("Job cannot be resumed in state " + job.getStatus());
             }
+            scheduleRun(job);
         }
-        executor.submit(() -> runJob(job));
+        jobRepository.save(job);
         log.info("Job resumed: id={}", jobId);
         return job;
     }
@@ -152,16 +189,27 @@ public class JobService {
     public DownloadJob retry(UUID jobId) {
         DownloadJob job = get(jobId);
         synchronized (job) {
-            if (executions.containsKey(jobId)) {
-                throw new IllegalStateException("Job is still stopping, retry shortly");
-            }
             if (!job.retry(Instant.now(), "Retried by request")) {
                 throw new IllegalStateException("Job cannot be retried in state " + job.getStatus());
             }
+            scheduleRun(job);
         }
-        executor.submit(() -> runJob(job));
+        jobRepository.save(job);
         log.info("Job retried: id={}", jobId);
         return job;
+    }
+
+    /**
+     * Starts the job now, or right after its previous run finishes stopping, so a quick
+     * pause+resume never runs two downloaders on the same partial file. Caller holds the job lock.
+     */
+    private void scheduleRun(DownloadJob job) {
+        if (executions.containsKey(job.getJobId())) {
+            pendingRestarts.add(job.getJobId());
+            job.setMessage(sanitizeMessage("Waiting for previous run to stop"));
+            return;
+        }
+        executor.submit(() -> runJob(job));
     }
 
     public List<StorageTarget> listStorageTargets(Long requiredBytes) {
@@ -270,7 +318,7 @@ public class JobService {
         }
 
         Path source = Path.of(outputPath).toAbsolutePath().normalize();
-        if (!Files.exists(source) || !Files.isRegularFile(source)) {
+        if (!Files.exists(source)) {
             throw new IllegalStateException("job output file does not exist");
         }
 
@@ -286,20 +334,26 @@ public class JobService {
             job.setOutputPath(target.toString());
             job.setMessage(sanitizeMessage("File moved to " + target));
         }
+        jobRepository.save(job);
         return job;
     }
 
-    public JobOutputFile openJobOutput(UUID jobId) throws Exception {
+    /**
+     * Path of a job's output (a file, or a directory for multi-file torrents).
+     *
+     * @throws OutputNotAvailableException when the job has no output on disk
+     */
+    public Path resolveJobOutput(UUID jobId) {
         DownloadJob job = get(jobId);
         String outputPath = job.getOutputPath();
         if (outputPath == null || outputPath.isBlank()) {
-            throw new IllegalStateException("job output file is not available");
+            throw new OutputNotAvailableException("job output is not available");
         }
         Path source = Path.of(outputPath).toAbsolutePath().normalize();
-        if (!Files.exists(source) || !Files.isRegularFile(source)) {
-            throw new IllegalStateException("job output file does not exist");
+        if (!Files.exists(source)) {
+            throw new OutputNotAvailableException("job output does not exist on disk");
         }
-        return new JobOutputFile(source, Files.newInputStream(source), Files.size(source));
+        return source;
     }
 
     public StoredFile uploadToStorage(String storagePath, String fileName, java.io.InputStream inputStream) throws Exception {
@@ -320,11 +374,15 @@ public class JobService {
             return job;
         }
         Path source = Path.of(outputPath).toAbsolutePath().normalize();
-        Files.deleteIfExists(source);
+        if (source.getParent() == null || source.equals(baseDownloadDir) || baseDownloadDir.startsWith(source)) {
+            throw new IllegalStateException("refusing to delete " + source);
+        }
+        deleteRecursively(source);
         synchronized (job) {
             job.setOutputPath(null);
             job.setMessage(sanitizeMessage("Output file removed"));
         }
+        jobRepository.save(job);
         return job;
     }
 
@@ -346,15 +404,19 @@ public class JobService {
         }
 
         DownloadExecutionContext context = new DownloadExecutionContext();
-        executions.put(job.getJobId(), context);
-
         synchronized (job) {
+            if (executions.putIfAbsent(job.getJobId(), context) != null) {
+                // Previous run is still stopping; it restarts the job when it exits.
+                pendingRestarts.add(job.getJobId());
+                return;
+            }
             if ((job.getStatus() == JobStatus.CANCELED || job.getStatus() == JobStatus.PAUSED)
                     || !job.start(Instant.now(), sanitizeMessage("Started"))) {
                 executions.remove(job.getJobId());
                 return;
             }
         }
+        jobRepository.save(job);
         log.info("Job started: id={}, type={}", job.getJobId(), job.getType());
 
         try {
@@ -364,11 +426,14 @@ public class JobService {
             DownloadResult result = downloader.download(request, context, update -> applyProgress(job, context, update));
 
             synchronized (job) {
-                if (isCurrentExecution(job, context) && job.getStatus() != JobStatus.CANCELED) {
-                    job.complete(Instant.now(), sanitizeMessage(result.message()), result.outputPath());
+                if (isCurrentExecution(job, context) && job.complete(Instant.now(), sanitizeMessage(result.message()), result.outputPath())) {
+                    pendingRestarts.remove(job.getJobId());
                     if (result.outputPath() != null && !result.outputPath().isBlank()) {
                         try {
-                            job.setOutputSizeBytes(Files.size(Path.of(result.outputPath())));
+                            long outputSize = sizeOf(Path.of(result.outputPath()));
+                            job.setOutputSizeBytes(outputSize);
+                            // Tools report rounded sizes (aria2c "16MiB"); the file on disk is exact.
+                            job.setTotalBytes(outputSize);
                         } catch (Exception ignored) {
                             // Leave size unknown if file metadata cannot be read.
                         }
@@ -378,45 +443,46 @@ public class JobService {
             log.info("Job completed: id={}, outputPath={}", job.getJobId(), job.getOutputPath());
         } catch (CancellationException ex) {
             synchronized (job) {
-                if (isCurrentExecution(job, context)
-                        && job.getStatus() != JobStatus.CANCELED
-                        && job.getStatus() != JobStatus.PAUSED) {
+                // Pause/cancel already set the status; only a stop nobody asked for
+                // (node shutdown) leaves the job RUNNING here.
+                if (isCurrentExecution(job, context) && job.getStatus() == JobStatus.RUNNING) {
                     job.cancel(Instant.now(), sanitizeMessage("Canceled"));
                 }
             }
-            if (job.getStatus() == JobStatus.PAUSED) {
-                log.info("Job paused during execution: id={}", job.getJobId());
-            } else {
-                log.info("Job canceled during execution: id={}", job.getJobId());
-            }
+            log.info("Job stopped during execution: id={}, status={}", job.getJobId(), job.getStatus());
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
             boolean treatAsCanceled = context.isCanceled() || ex instanceof InterruptedException;
             synchronized (job) {
-                if (isCurrentExecution(job, context) && job.getStatus() != JobStatus.CANCELED) {
+                if (isCurrentExecution(job, context) && job.getStatus() == JobStatus.RUNNING) {
                     if (treatAsCanceled) {
-                        if (job.getStatus() != JobStatus.PAUSED) {
-                            job.cancel(Instant.now(), sanitizeMessage("Canceled"));
-                        }
+                        job.cancel(Instant.now(), sanitizeMessage("Canceled"));
                     } else {
                         job.fail(Instant.now(), sanitizeMessage(ex.getMessage()));
                     }
                 }
             }
             if (treatAsCanceled) {
-                if (job.getStatus() == JobStatus.PAUSED) {
-                    log.info("Job paused during execution: id={}", job.getJobId());
-                } else {
-                    log.info("Job canceled during execution: id={}", job.getJobId());
-                }
+                log.info("Job stopped during execution: id={}, status={}", job.getJobId(), job.getStatus());
             } else {
                 log.warn("Job failed: id={}, message={}", job.getJobId(), ex.getMessage());
             }
         } finally {
-            if (executions.remove(job.getJobId(), context)) {
-                lastProgressUpdateMillis.remove(job.getJobId());
+            boolean restart;
+            synchronized (job) {
+                if (executions.remove(job.getJobId(), context)) {
+                    lastProgressUpdateMillis.remove(job.getJobId());
+                }
+                restart = pendingRestarts.remove(job.getJobId()) && job.getStatus() == JobStatus.QUEUED;
+            }
+            // A stop caused by shutdown is not persisted: the job stays RUNNING on disk and continues after restart.
+            if (!shuttingDown || job.getStatus() != JobStatus.CANCELED) {
+                jobRepository.save(job);
+            }
+            if (restart && !shuttingDown) {
+                executor.submit(() -> runJob(job));
             }
         }
     }
@@ -456,10 +522,13 @@ public class JobService {
     @PreDestroy
     public void shutdown() {
         log.info("JobService shutdown started");
+        // Jobs interrupted by shutdown keep their persisted QUEUED/RUNNING state and continue after restart.
+        shuttingDown = true;
         executions.values().forEach(DownloadExecutionContext::cancel);
         executor.shutdownNow();
         try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+            // Give external tools time to save their resume state after SIGTERM.
+            if (!executor.awaitTermination(20, TimeUnit.SECONDS)) {
                 log.warn("Executor did not terminate within timeout");
             }
         } catch (InterruptedException ex) {
@@ -514,6 +583,8 @@ public class JobService {
         }
         try (var stream = Files.list(root)) {
             stream.filter(Files::isDirectory)
+                    // Hidden dirs hold node state (.lms-node), not download targets.
+                    .filter(path -> !path.getFileName().toString().startsWith("."))
                     .limit(STORAGE_CHILDREN_LIMIT)
                     .forEach(path -> out.add(path.toAbsolutePath().normalize()));
         } catch (Exception ignored) {
@@ -525,8 +596,56 @@ public class JobService {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception ignored) {
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-            Files.delete(source);
+            if (Files.isDirectory(source)) {
+                copyRecursively(source, target);
+                deleteRecursively(source);
+            } else {
+                Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+                Files.delete(source);
+            }
+        }
+    }
+
+    private void copyRecursively(Path source, Path target) throws Exception {
+        try (var paths = Files.walk(source)) {
+            for (Path path : (Iterable<Path>) paths::iterator) {
+                Path destination = target.resolve(source.relativize(path).toString());
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    private void deleteRecursively(Path path) throws Exception {
+        if (!Files.exists(path)) {
+            return;
+        }
+        if (!Files.isDirectory(path)) {
+            Files.delete(path);
+            return;
+        }
+        try (var paths = Files.walk(path)) {
+            for (Path entry : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(entry);
+            }
+        }
+    }
+
+    private long sizeOf(Path path) throws Exception {
+        if (!Files.isDirectory(path)) {
+            return Files.size(path);
+        }
+        try (var paths = Files.walk(path)) {
+            long total = 0L;
+            for (Path entry : (Iterable<Path>) paths::iterator) {
+                if (Files.isRegularFile(entry)) {
+                    total += Files.size(entry);
+                }
+            }
+            return total;
         }
     }
 

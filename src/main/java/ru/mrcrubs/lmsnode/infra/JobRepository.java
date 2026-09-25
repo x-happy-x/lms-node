@@ -7,6 +7,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface JobRepository {
+    /**
+     * Stores a new job or records a state change of a known one.
+     */
     DownloadJob save(DownloadJob job);
 
     Optional<DownloadJob> findById(UUID jobId);

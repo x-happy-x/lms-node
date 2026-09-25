@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import ru.mrcrubs.lmsnode.api.DownloadOptionResponse;
 import ru.mrcrubs.lmsnode.api.JobPreflightResponse;
 import ru.mrcrubs.lmsnode.api.StorageTargetResponse;
+import ru.mrcrubs.lmsnode.downloader.TorrentDownloader;
 import ru.mrcrubs.lmsnode.model.JobType;
 
 import java.io.File;
@@ -34,7 +35,11 @@ public class DownloadPreflightService {
     }
 
     public JobPreflightResponse preflight(String url) {
-        DirectProbe directProbe = probeDirect(url);
+        boolean magnet = TorrentDownloader.isMagnet(url);
+        boolean torrentLink = TorrentDownloader.looksLikeTorrent(url);
+        DirectProbe directProbe = magnet
+                ? new DirectProbe(false, false, false, null, false, "magnet links are downloaded as TORRENT")
+                : probeDirect(url);
         boolean aria2cAvailable = isExecutableOnPath(aria2cBinary);
         boolean ytdlpAvailable = isExecutableOnPath(ytdlpBinary);
 
@@ -48,7 +53,7 @@ public class DownloadPreflightService {
         ));
         options.add(new DownloadOptionResponse(
                 JobType.ARIA2C,
-                aria2cAvailable,
+                aria2cAvailable && !magnet,
                 directProbe.resumeSupported(),
                 aria2cAvailable && directProbe.segmentedPossible(),
                 aria2cAvailable
@@ -56,8 +61,19 @@ public class DownloadPreflightService {
                         : "aria2c binary is not available on node"
         ));
         options.add(new DownloadOptionResponse(
+                JobType.TORRENT,
+                aria2cAvailable && torrentLink,
+                aria2cAvailable && torrentLink,
+                aria2cAvailable && torrentLink,
+                !aria2cAvailable
+                        ? "aria2c binary is not available on node"
+                        : torrentLink
+                        ? "torrent is downloaded with aria2c; size is known after metadata is fetched"
+                        : "url is not a magnet link or a .torrent file"
+        ));
+        options.add(new DownloadOptionResponse(
                 JobType.YTDLP,
-                ytdlpAvailable,
+                ytdlpAvailable && !magnet,
                 false,
                 false,
                 ytdlpAvailable
@@ -71,7 +87,11 @@ public class DownloadPreflightService {
                 .toList();
 
         JobType recommendedType = null;
-        if (directProbe.supported()) {
+        if (torrentLink && aria2cAvailable) {
+            recommendedType = JobType.TORRENT;
+        } else if (magnet) {
+            recommendedType = null;
+        } else if (directProbe.supported()) {
             recommendedType = JobType.DIRECT;
         } else if (aria2cAvailable) {
             recommendedType = JobType.ARIA2C;

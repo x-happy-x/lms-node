@@ -19,8 +19,19 @@ import ru.mrcrubs.lmsnode.model.JobType;
 import ru.mrcrubs.lmsnode.service.DownloadPreflightService;
 import ru.mrcrubs.lmsnode.service.JobNotFoundException;
 import ru.mrcrubs.lmsnode.service.JobService;
+import ru.mrcrubs.lmsnode.service.OutputNotAvailableException;
+import ru.mrcrubs.lmsnode.service.PreviewService;
 
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.List;
 import java.util.UUID;
 
@@ -29,7 +40,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -50,6 +65,12 @@ class JobControllerWebMvcTest {
 
     @MockitoBean
     private DownloadPreflightService downloadPreflightService;
+
+    @MockitoBean
+    private PreviewService previewService;
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void preflightShouldReturnCapabilities() throws Exception {
@@ -146,6 +167,38 @@ class JobControllerWebMvcTest {
     }
 
     @Test
+    void createShouldAcceptMagnetForTorrent() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=file";
+        when(jobService.create(JobType.TORRENT, magnet, null, true)).thenReturn(jobId);
+
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "TORRENT",
+                                  "url": "%s"
+                                }
+                                """.formatted(magnet)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+    }
+
+    @Test
+    void createShouldRejectMagnetForNonTorrentType() throws Exception {
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "DIRECT",
+                                  "url": "magnet:?xt=urn:btih:abc"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", containsString("magnet")));
+    }
+
+    @Test
     void listShouldReturnJobsAndPassActiveFlag() throws Exception {
         DownloadJob job = job(UUID.randomUUID(), JobType.DIRECT, "https://example.com/file", JobStatus.RUNNING);
         when(jobService.list(true)).thenReturn(List.of(job));
@@ -233,5 +286,99 @@ class JobControllerWebMvcTest {
             job.fail(Instant.now(), "Failed");
         }
         return job;
+    }
+
+    @Test
+    void fileShouldSupportRangeAndTypeAndUtf8Name() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        Path file = tempDir.resolve("summer trip.mp4");
+        Files.writeString(file, "0123456789abcdefghij");
+        when(jobService.resolveJobOutput(jobId)).thenReturn(file);
+
+        mockMvc.perform(get("/api/jobs/{jobId}/file", jobId).header("Range", "bytes=10-"))
+                .andExpect(status().isPartialContent())
+                .andExpect(header().string("Content-Range", "bytes 10-19/20"))
+                .andExpect(header().string("Content-Type", "video/mp4"))
+                .andExpect(header().string("X-File-Name", "summer%20trip.mp4"))
+                .andExpect(header().string("Content-Disposition", containsString("filename*=UTF-8''")))
+                .andExpect(content().string("abcdefghij"));
+
+        mockMvc.perform(get("/api/jobs/{jobId}/file", jobId))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Accept-Ranges", "bytes"))
+                .andExpect(content().string("0123456789abcdefghij"));
+
+        mockMvc.perform(get("/api/jobs/{jobId}/file", jobId).header("Range", "bytes=99-"))
+                .andExpect(status().isRequestedRangeNotSatisfiable());
+    }
+
+    @Test
+    void fileNameHeaderShouldBePercentEncodedUtf8() throws Exception {
+        // Non-ASCII paths need a UTF-8 JVM locale (the Docker image sets LANG=en_US.UTF-8).
+        org.junit.jupiter.api.Assumptions.assumeTrue("UTF-8".equalsIgnoreCase(System.getProperty("sun.jnu.encoding")),
+                "file system encoding is not UTF-8");
+        UUID jobId = UUID.randomUUID();
+        Path file = tempDir.resolve("отпуск.mp4");
+        Files.writeString(file, "x");
+        when(jobService.resolveJobOutput(jobId)).thenReturn(file);
+
+        mockMvc.perform(get("/api/jobs/{jobId}/file", jobId))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-File-Name", "%D0%BE%D1%82%D0%BF%D1%83%D1%81%D0%BA.mp4"));
+    }
+
+    @Test
+    void fileShouldStreamDirectoryAsZip() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        Path dir = tempDir.resolve("Show");
+        Files.createDirectories(dir.resolve("s01"));
+        Files.writeString(dir.resolve("s01/e01.mkv"), "episode");
+        Files.writeString(dir.resolve("info.nfo"), "nfo");
+        when(jobService.resolveJobOutput(jobId)).thenReturn(dir);
+
+        byte[] zip = mockMvc.perform(get("/api/jobs/{jobId}/file", jobId))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/zip"))
+                .andExpect(header().string("X-File-Name", "Show.zip"))
+                .andReturn().getResponse().getContentAsByteArray();
+
+        List<String> names = new java.util.ArrayList<>();
+        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip))) {
+            ZipEntry entry;
+            while ((entry = in.getNextEntry()) != null) {
+                names.add(entry.getName() + "=" + new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            }
+        }
+        assertEquals(List.of("Show/info.nfo=nfo", "Show/s01/e01.mkv=episode"), names);
+    }
+
+    @Test
+    void fileShouldReturn404WhenOutputMissing() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        when(jobService.resolveJobOutput(jobId)).thenThrow(new OutputNotAvailableException("job output is not available"));
+
+        mockMvc.perform(get("/api/jobs/{jobId}/file", jobId))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("job output is not available"));
+    }
+
+    @Test
+    void previewShouldServeJpegOr404() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        Path file = tempDir.resolve("clip.mp4");
+        Path thumb = tempDir.resolve("thumb.jpg");
+        Files.writeString(file, "video");
+        Files.writeString(thumb, "jpeg");
+        when(jobService.resolveJobOutput(jobId)).thenReturn(file);
+        when(previewService.preview(jobId, file)).thenReturn(Optional.of(thumb));
+
+        mockMvc.perform(get("/api/jobs/{jobId}/preview", jobId))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "image/jpeg"))
+                .andExpect(content().string("jpeg"));
+
+        when(previewService.preview(jobId, file)).thenReturn(Optional.empty());
+        mockMvc.perform(get("/api/jobs/{jobId}/preview", jobId))
+                .andExpect(status().isNotFound());
     }
 }
