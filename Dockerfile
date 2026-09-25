@@ -2,7 +2,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends yt-dlp aria2 ca-certificates \
+    && apt-get install -y --no-install-recommends yt-dlp aria2 ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /downloads
