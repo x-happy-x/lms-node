@@ -39,6 +39,8 @@ node:
   tools:
     ytdlp: ${YTDLP_BIN:yt-dlp}
     aria2c: ${ARIA2C_BIN:aria2c}
+    # Optional: thumbnails for image/video outputs (GET /api/jobs/{id}/preview).
+    ffmpeg: ${FFMPEG_BIN:ffmpeg}
   torrent:
     # Minutes to keep seeding after a torrent completes; 0 = stop right away.
     seed-time-minutes: ${TORRENT_SEED_TIME_MINUTES:0}

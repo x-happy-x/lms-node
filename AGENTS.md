@@ -36,7 +36,8 @@ This repository contains the **Node Agent** (remote worker) for a home download 
 - No node-to-router callbacks, polling channels, or websockets.
 - No heavy persistence requirement for MVP (in-memory storage is acceptable).
   - Persistence (SQLite/PostgreSQL) can be added later without changing API shape.
-- No end-user file streaming through the node API.
+- No direct end-user access: finished files and thumbnails are served only to the router
+  (`GET /api/jobs/{id}/file` with Range, `/preview`), which streams them to LAN clients.
 
 ---
 
@@ -51,7 +52,7 @@ This repository contains the **Node Agent** (remote worker) for a home download 
 
 - `yt-dlp`
 - `aria2c`
-- Optional later: `ffmpeg`
+- `ffmpeg` (optional): thumbnails for image/video outputs
 
 ### Storage
 

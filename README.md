@@ -36,6 +36,7 @@ Important env vars:
 - `NODE_HMAC_SECRET` (required for real usage)
 - `YTDLP_BIN` (default `yt-dlp`)
 - `ARIA2C_BIN` (default `aria2c`, also used for `TORRENT`)
+- `FFMPEG_BIN` (default `ffmpeg`, optional: media thumbnails)
 - `NODE_STATE_FILE` (default `<download-dir>/.lms-node/jobs.json`; empty = memory only)
 - `NODE_RESUME_ON_STARTUP` (default `true`: continue interrupted jobs after restart; `false` = leave them `PAUSED`)
 - `TORRENT_LISTEN_PORT` (default `6881-6999`; in Docker `TORRENT_PORT`, default `6881`, is published tcp+udp)
@@ -142,6 +143,20 @@ stays `QUEUED` ("Waiting for previous run to stop") and starts as soon as it exi
 `POST /api/jobs/{jobId}/retry`
 
 Re-queues an `ERROR` or `CANCELED` job. It continues from the partial data too.
+
+### Job output
+
+`GET /api/jobs/{jobId}/file`
+
+Streams the output. Single files support `Range` (206/416) and `HEAD`, with the MIME type
+from the extension; folder outputs (multi-file torrents) are streamed as a ZIP.
+`X-File-Name` carries the percent-encoded UTF-8 file name. 404 when there is no output.
+
+`GET /api/jobs/{jobId}/preview`
+
+JPEG thumbnail (up to 480px wide) for image and video outputs, made with `ffmpeg` on first
+request and cached next to the state file (`previews/`). 404 when not possible (not media,
+no ffmpeg).
 
 ## Download continuation
 

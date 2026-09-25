@@ -338,20 +338,22 @@ public class JobService {
         return job;
     }
 
-    public JobOutputFile openJobOutput(UUID jobId) throws Exception {
+    /**
+     * Path of a job's output (a file, or a directory for multi-file torrents).
+     *
+     * @throws OutputNotAvailableException when the job has no output on disk
+     */
+    public Path resolveJobOutput(UUID jobId) {
         DownloadJob job = get(jobId);
         String outputPath = job.getOutputPath();
         if (outputPath == null || outputPath.isBlank()) {
-            throw new IllegalStateException("job output file is not available");
+            throw new OutputNotAvailableException("job output is not available");
         }
         Path source = Path.of(outputPath).toAbsolutePath().normalize();
-        if (Files.isDirectory(source)) {
-            throw new IllegalStateException("job output is a directory and cannot be streamed");
+        if (!Files.exists(source)) {
+            throw new OutputNotAvailableException("job output does not exist on disk");
         }
-        if (!Files.exists(source) || !Files.isRegularFile(source)) {
-            throw new IllegalStateException("job output file does not exist");
-        }
-        return new JobOutputFile(source, Files.newInputStream(source), Files.size(source));
+        return source;
     }
 
     public StoredFile uploadToStorage(String storagePath, String fileName, java.io.InputStream inputStream) throws Exception {
