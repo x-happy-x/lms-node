@@ -19,10 +19,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -148,15 +153,131 @@ class DirectHttpDownloaderTest {
         assertTrue(requestLog.ifRanges.get(1) == null || requestLog.ifRanges.get(1).isBlank());
     }
 
+    @Test
+    void downloadShouldResumeWithoutValidatorWhenSizeMatches(@TempDir Path tempDir) throws Exception {
+        byte[] content = "0123456789abcdefghij".getBytes(StandardCharsets.UTF_8);
+        RangeHandler handler = new RangeHandler(content, null);
+        server = startServer(handler);
+
+        UUID jobId = UUID.randomUUID();
+        DownloadRequest request = new DownloadRequest(jobId, null, url("/file.bin"), tempDir);
+        Files.write(tempDir.resolve(jobId + ".part"), slice(content, 0, 10));
+        writeMetadata(tempDir.resolve(jobId + ".part.meta"), request.url(), "file.bin", null, null, content.length);
+
+        DownloadResult result = downloader.download(request, new DownloadExecutionContext(), update -> {
+        });
+
+        assertEquals("Completed (resumed)", result.message());
+        assertEquals(new String(content, StandardCharsets.UTF_8), Files.readString(tempDir.resolve("file.bin")));
+        assertEquals(List.of("bytes=10-"), handler.ranges);
+    }
+
+    @Test
+    void downloadShouldReconnectAndResumeWhenConnectionDrops(@TempDir Path tempDir) throws Exception {
+        byte[] content = new byte[200_000];
+        new java.util.Random(1).nextBytes(content);
+        RangeHandler handler = new RangeHandler(content, "\"v1\"");
+        handler.cutFirstResponseAt = 70_000;
+        server = startServer(handler);
+
+        DirectHttpDownloader retrying = new DirectHttpDownloader(3, Duration.ofSeconds(5), Duration.ofMillis(10));
+        UUID jobId = UUID.randomUUID();
+        DownloadRequest request = new DownloadRequest(jobId, null, url("/file.bin"), tempDir);
+        List<ProgressUpdate> progress = new CopyOnWriteArrayList<>();
+
+        DownloadResult result = retrying.download(request, new DownloadExecutionContext(), progress::add);
+
+        assertArrayEquals(content, Files.readAllBytes(Path.of(result.outputPath())));
+        assertEquals(2, handler.ranges.size());
+        assertNull(handler.ranges.get(0));
+        assertTrue(handler.ranges.get(1).startsWith("bytes="), "second request should resume with Range");
+        assertNotEquals("bytes=0-", handler.ranges.get(1));
+        assertTrue(progress.stream().anyMatch(update -> update.message() != null && update.message().contains("reconnecting")));
+    }
+
+    @Test
+    void downloadShouldReconnectWhenConnectionStalls(@TempDir Path tempDir) throws Exception {
+        byte[] content = new byte[100_000];
+        new java.util.Random(2).nextBytes(content);
+        RangeHandler handler = new RangeHandler(content, "\"v1\"");
+        handler.stallFirstResponseAt = 40_000;
+        server = startServer(handler);
+
+        DirectHttpDownloader retrying = new DirectHttpDownloader(3, Duration.ofMillis(300), Duration.ofMillis(10));
+        UUID jobId = UUID.randomUUID();
+        DownloadRequest request = new DownloadRequest(jobId, null, url("/file.bin"), tempDir);
+
+        DownloadResult result = retrying.download(request, new DownloadExecutionContext(), update -> {
+        });
+
+        assertArrayEquals(content, Files.readAllBytes(Path.of(result.outputPath())));
+        assertEquals(2, handler.ranges.size());
+        assertTrue(handler.ranges.get(1).startsWith("bytes="));
+    }
+
+    @Test
+    void downloadShouldFinishWhenPartialIsAlreadyComplete(@TempDir Path tempDir) throws Exception {
+        byte[] content = "complete-content".getBytes(StandardCharsets.UTF_8);
+        RangeHandler handler = new RangeHandler(content, "\"v1\"");
+        server = startServer(handler);
+
+        UUID jobId = UUID.randomUUID();
+        DownloadRequest request = new DownloadRequest(jobId, null, url("/file.bin"), tempDir);
+        Files.write(tempDir.resolve(jobId + ".part"), content);
+        writeMetadata(tempDir.resolve(jobId + ".part.meta"), request.url(), "file.bin", "\"v1\"", null, content.length);
+
+        DownloadResult result = downloader.download(request, new DownloadExecutionContext(), update -> {
+        });
+
+        assertEquals(tempDir.resolve("file.bin").toString(), result.outputPath());
+        assertEquals("complete-content", Files.readString(tempDir.resolve("file.bin")));
+        assertEquals(List.of("bytes=" + content.length + "-"), handler.ranges);
+    }
+
+    @Test
+    void cancelShouldKeepPartialForLaterResume(@TempDir Path tempDir) throws Exception {
+        byte[] content = new byte[100_000];
+        new java.util.Random(3).nextBytes(content);
+        RangeHandler handler = new RangeHandler(content, "\"v1\"");
+        handler.stallFirstResponseAt = 30_000;
+        server = startServer(handler);
+
+        UUID jobId = UUID.randomUUID();
+        DownloadRequest request = new DownloadRequest(jobId, null, url("/file.bin"), tempDir);
+        DownloadExecutionContext context = new DownloadExecutionContext();
+        Thread canceler = Thread.ofVirtual().start(() -> {
+            try {
+                while (!Files.exists(tempDir.resolve(jobId + ".part")) || Files.size(tempDir.resolve(jobId + ".part")) < 30_000) {
+                    Thread.sleep(10);
+                }
+            } catch (Exception ignored) {
+                // test helper
+            }
+            context.cancel();
+        });
+
+        assertThrows(java.util.concurrent.CancellationException.class,
+                () -> downloader.download(request, context, update -> {
+                }));
+        canceler.join();
+        assertEquals(30_000, Files.size(tempDir.resolve(jobId + ".part")));
+
+        DownloadResult result = downloader.download(request, new DownloadExecutionContext(), update -> {
+        });
+        assertArrayEquals(content, Files.readAllBytes(Path.of(result.outputPath())));
+        assertEquals("bytes=30000-", handler.ranges.getLast());
+    }
+
     private HttpResponse<?> responseWithHeaders(Map<String, List<String>> headers) {
         HttpResponse<?> response = mock(HttpResponse.class);
         when(response.headers()).thenReturn(HttpHeaders.of(headers, (x, y) -> true));
         return response;
     }
 
-    private HttpServer startServer(ResumeHandler handler) throws IOException {
+    private HttpServer startServer(com.sun.net.httpserver.HttpHandler handler) throws IOException {
         HttpServer created = HttpServer.create(new InetSocketAddress(0), 0);
         created.createContext("/file.bin", handler);
+        created.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         created.start();
         return created;
     }
@@ -188,6 +309,73 @@ class DirectHttpDownloaderTest {
         }
         lines.add("totalBytes=" + totalBytes);
         Files.write(path, lines, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Range-capable server that can drop or stall the first response mid-body.
+     */
+    private static final class RangeHandler implements com.sun.net.httpserver.HttpHandler {
+        private final byte[] body;
+        private final String etag;
+        private final List<String> ranges = new CopyOnWriteArrayList<>();
+        private volatile int cutFirstResponseAt = -1;
+        private volatile int stallFirstResponseAt = -1;
+
+        private RangeHandler(byte[] body, String etag) {
+            this.body = body;
+            this.etag = etag;
+        }
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            boolean first = ranges.isEmpty();
+            ranges.add(range);
+            Headers headers = exchange.getResponseHeaders();
+            headers.add("Content-Disposition", "attachment; filename=file.bin");
+            headers.add("Accept-Ranges", "bytes");
+            if (etag != null) {
+                headers.add("ETag", etag);
+            }
+            int start = 0;
+            if (range != null) {
+                start = Integer.parseInt(range.substring("bytes=".length(), range.indexOf('-')));
+                if (start >= body.length) {
+                    headers.add("Content-Range", "bytes */" + body.length);
+                    exchange.sendResponseHeaders(416, -1);
+                    exchange.close();
+                    return;
+                }
+                headers.add("Content-Range", "bytes " + start + "-" + (body.length - 1) + "/" + body.length);
+                exchange.sendResponseHeaders(206, body.length - start);
+            } else {
+                exchange.sendResponseHeaders(200, body.length);
+            }
+            OutputStream out = exchange.getResponseBody();
+            try {
+                if (first && cutFirstResponseAt > 0) {
+                    out.write(body, start, cutFirstResponseAt);
+                    out.flush();
+                    // Drop the connection mid-body.
+                    throw new IOException("simulated connection drop");
+                }
+                if (first && stallFirstResponseAt > 0) {
+                    out.write(body, start, stallFirstResponseAt);
+                    out.flush();
+                    Thread.sleep(3000);
+                    return;
+                }
+                out.write(body, start, body.length - start);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            } finally {
+                try {
+                    out.close();
+                } catch (IOException ignored) {
+                    // Expected when the body was cut short.
+                }
+            }
+        }
     }
 
     private static final class RequestLog {

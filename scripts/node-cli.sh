@@ -12,7 +12,7 @@ Usage:
 
 Commands:
   create <TYPE> <URL> [storagePath]
-                           Create a job (TYPE: DIRECT|YTDLP|ARIA2C)
+                           Create a job (TYPE: DIRECT|YTDLP|ARIA2C|TORRENT)
   list [active]            List jobs; optional active=true|false
   get <JOB_ID>             Get one job
   cancel <JOB_ID>          Cancel job

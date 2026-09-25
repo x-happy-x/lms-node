@@ -75,7 +75,7 @@ Request body example:
 
 ```json
 {
-  "type": "YTDLP", // DIRECT | YTDLP | ARIA2C
+  "type": "YTDLP", // DIRECT | YTDLP | ARIA2C | TORRENT (magnet:? or .torrent link)
   "url": "https://..."
 }
 ```
@@ -112,9 +112,9 @@ Best-effort behavior:
 ## Job Model (Minimum)
 
 - `jobId: UUID`
-- `type: DIRECT | YTDLP | ARIA2C`
+- `type: DIRECT | YTDLP | ARIA2C | TORRENT`
 - `url: string`
-- `status: QUEUED | RUNNING | DONE | ERROR | CANCELED`
+- `status: QUEUED | PAUSED | RUNNING | DONE | ERROR | CANCELED`
 - progress (optional but recommended):
   - `percent: number?`
   - `speedBytes: number?`

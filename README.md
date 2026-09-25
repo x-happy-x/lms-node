@@ -3,9 +3,9 @@
 Remote worker service for home download automation.
 
 - Router calls node over HTTPS (`PUSH` model)
-- Node executes heavy downloads (`DIRECT`, `YTDLP`, `ARIA2C`)
+- Node executes heavy downloads (`DIRECT`, `YTDLP`, `ARIA2C`, `TORRENT`)
 - All `/api/**` endpoints are protected by HMAC + nonce authentication
-- Node is stateless about router and keeps job state in memory (MVP)
+- Node is stateless about router; job state is kept in memory and mirrored to a JSON state file
 
 ## How it works
 
@@ -35,7 +35,11 @@ Important env vars:
 - `NODE_MAX_PARALLEL` (default `1`)
 - `NODE_HMAC_SECRET` (required for real usage)
 - `YTDLP_BIN` (default `yt-dlp`)
-- `ARIA2C_BIN` (default `aria2c`)
+- `ARIA2C_BIN` (default `aria2c`, also used for `TORRENT`)
+- `NODE_STATE_FILE` (default `<download-dir>/.lms-node/jobs.json`; empty = memory only)
+- `NODE_RESUME_ON_STARTUP` (default `true`: continue interrupted jobs after restart; `false` = leave them `PAUSED`)
+- `TORRENT_LISTEN_PORT` (default `6881-6999`; in Docker `TORRENT_PORT`, default `6881`, is published tcp+udp)
+- `TORRENT_SEED_TIME_MINUTES` (default `0`: stop right after download)
 - `NODE_AUTH_ALLOWED_SKEW_SECONDS` (default `120`)
 - `NODE_AUTH_NONCE_TTL_SECONDS` (default `600`)
 
@@ -82,6 +86,8 @@ Base path: `/api/jobs`
 }
 ```
 
+- `type`: `DIRECT` | `YTDLP` | `ARIA2C` | `TORRENT`.
+- `url`: `http(s)://...`; `TORRENT` also accepts `magnet:?...` (magnets are rejected for other types).
 - `storagePath` is optional.
 - If provided, it is resolved under configured `node.download-dir`.
 - Paths outside `node.download-dir` are rejected with `400`.
@@ -128,6 +134,41 @@ Pauses queued/running job. Running process is interrupted and job becomes `PAUSE
 `POST /api/jobs/{jobId}/resume`
 
 Resumes paused job by putting it back into queue (`QUEUED`) for execution.
+Resume can be called right after pause: if the previous run is still stopping, the job
+stays `QUEUED` ("Waiting for previous run to stop") and starts as soon as it exits.
+
+### Retry job
+
+`POST /api/jobs/{jobId}/retry`
+
+Re-queues an `ERROR` or `CANCELED` job. It continues from the partial data too.
+
+## Download continuation
+
+Pause, retry and node restarts continue from the data already on disk:
+
+- `DIRECT`: data goes to `<jobId>.part` + `<jobId>.part.meta`; the next run sends
+  `Range` (with `If-Range` when the server gave `ETag`/`Last-Modified`, otherwise the
+  total size is checked). Dropped or stalled (60s without data) connections are retried
+  inside the same run with backoff, up to 8 attempts, each continuing from the partial file.
+  If the server ignores ranges or the file changed, the download starts over.
+- `ARIA2C` / `TORRENT`: aria2c runs with `--continue` and keeps its `.aria2` control file;
+  the process is stopped with SIGTERM so the state is saved (forced kill after 15s).
+  Servers without range support restart the file instead of failing.
+- `YTDLP`: yt-dlp keeps `.part` files and continues them; the process tree gets SIGTERM.
+  The final file path is reported as `outputPath`.
+- Job state is written to `NODE_STATE_FILE`. Jobs that were `QUEUED`/`RUNNING` when the
+  node stopped are queued again on startup (`PAUSED` stay paused).
+
+## Torrents
+
+`TORRENT` jobs download magnet links or http(s) links to `.torrent` files with aria2c
+(DHT, PEX and local peer discovery on). `outputPath` is the torrent's top-level file or
+directory; `move` and `file/delete` handle directories, `GET /file` works only for a single file.
+Magnet metadata is saved as `<infohash>.torrent` in the target dir while the job runs, so
+resume does not refetch it. Seeding stops right after completion unless
+`TORRENT_SEED_TIME_MINUTES` is set. `preflight` recommends `TORRENT` for magnets and
+`.torrent` links.
 
 ## Authentication (HMAC + nonce)
 
@@ -202,7 +243,7 @@ Quick start:
 
 ## Operational notes
 
-- Job and nonce stores are in memory (restart resets state).
+- Nonce store is in memory; job state survives restarts via `NODE_STATE_FILE`.
 - Service logs lifecycle events (created/started/completed/canceled/failed).
 - Runtime startup checks warn if download directory or downloader binaries are not ready.
 - Deploy with Nginx in front and fail2ban on 401/403 responses.

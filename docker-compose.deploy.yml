@@ -3,12 +3,19 @@ services:
     image: lms-node:latest
     container_name: ${CONTAINER_NAME:-lms-node}
     restart: unless-stopped
+    # Lets aria2c/yt-dlp save resume state after SIGTERM before the container is killed.
+    stop_grace_period: 30s
     ports:
       - "${HOST_PORT:-8080}:8080"
+      # BitTorrent peers and DHT for TORRENT jobs.
+      - "${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/tcp"
+      - "${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/udp"
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       NODE_HMAC_SECRET: ${NODE_HMAC_SECRET:-change-me}
       NODE_MAX_PARALLEL: ${NODE_MAX_PARALLEL:-1}
       NODE_DOWNLOAD_DIR: ${NODE_DOWNLOAD_DIR:-/downloads}
+      TORRENT_LISTEN_PORT: ${TORRENT_PORT:-6881}
+      TORRENT_SEED_TIME_MINUTES: ${TORRENT_SEED_TIME_MINUTES:-0}
     volumes:
       - ${REMOTE_DOWNLOADS_DIR:-./downloads}:/downloads
