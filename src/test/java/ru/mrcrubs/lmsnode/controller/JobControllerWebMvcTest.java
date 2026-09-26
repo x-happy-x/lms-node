@@ -21,6 +21,9 @@ import ru.mrcrubs.lmsnode.service.JobNotFoundException;
 import ru.mrcrubs.lmsnode.service.JobService;
 import ru.mrcrubs.lmsnode.service.OutputNotAvailableException;
 import ru.mrcrubs.lmsnode.service.PreviewService;
+import ru.mrcrubs.lmsnode.service.MediaExtractException;
+import ru.mrcrubs.lmsnode.service.MediaExtractService;
+import ru.mrcrubs.lmsnode.api.MediaExtractResponse;
 
 import org.junit.jupiter.api.io.TempDir;
 
@@ -69,6 +72,9 @@ class JobControllerWebMvcTest {
     @MockitoBean
     private PreviewService previewService;
 
+    @MockitoBean
+    private MediaExtractService mediaExtractService;
+
     @TempDir
     Path tempDir;
 
@@ -101,7 +107,7 @@ class JobControllerWebMvcTest {
     @Test
     void createShouldReturn201AndJobId() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true), isNull())).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -118,7 +124,7 @@ class JobControllerWebMvcTest {
     @Test
     void createShouldPassStoragePath() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(true))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(true), isNull())).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -136,7 +142,7 @@ class JobControllerWebMvcTest {
     @Test
     void createShouldAllowAddingWithoutImmediateStart() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(false))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(false), isNull())).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -170,7 +176,7 @@ class JobControllerWebMvcTest {
     void createShouldAcceptMagnetForTorrent() throws Exception {
         UUID jobId = UUID.randomUUID();
         String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=file";
-        when(jobService.create(JobType.TORRENT, magnet, null, true)).thenReturn(jobId);
+        when(jobService.create(JobType.TORRENT, magnet, null, true, null)).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -380,5 +386,58 @@ class JobControllerWebMvcTest {
         when(previewService.preview(jobId, file)).thenReturn(Optional.empty());
         mockMvc.perform(get("/api/jobs/{jobId}/preview", jobId))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void speedShouldSetLimitAndCreateShouldPassIt() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        DownloadJob job = new DownloadJob(jobId, JobType.DIRECT, "https://example.com/file", Instant.now());
+        job.setMaxSpeedBytes(1_048_576L);
+        when(jobService.setSpeedLimit(jobId, 1_048_576L)).thenReturn(job);
+
+        mockMvc.perform(post("/api/jobs/{jobId}/speed", jobId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"maxSpeedBytes\":1048576}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxSpeedBytes").value(1048576));
+
+        mockMvc.perform(post("/api/jobs/{jobId}/speed", jobId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"maxSpeedBytes\":-5}"))
+                .andExpect(status().isBadRequest());
+
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), isNull(), eq(true), eq(2_000_000L))).thenReturn(jobId);
+        mockMvc.perform(post("/api/jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"DIRECT\",\"url\":\"https://example.com/file\",\"maxSpeedBytes\":2000000}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+    }
+
+    @Test
+    void extractShouldListEntriesAndMapErrors() throws Exception {
+        when(mediaExtractService.extract("https://example.com/list")).thenReturn(new MediaExtractResponse(
+                "https://example.com/list", "playlist", "Mix", "Generic", null, null, null,
+                List.of(new MediaExtractResponse.Entry("https://example.com/a.mp4", "A", 12L, null)), 1, false));
+        mockMvc.perform(post("/api/jobs/extract")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://example.com/list\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("playlist"))
+                .andExpect(jsonPath("$.entries[0].url").value("https://example.com/a.mp4"))
+                .andExpect(jsonPath("$.entries[0].durationSeconds").value(12));
+
+        when(mediaExtractService.extract("https://example.com/nothing"))
+                .thenThrow(new MediaExtractException("Unsupported URL: https://example.com/nothing"));
+        mockMvc.perform(post("/api/jobs/extract")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://example.com/nothing\"}"))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.error").value("Unsupported URL: https://example.com/nothing"));
+
+        mockMvc.perform(post("/api/jobs/extract")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"magnet:?xt=urn:btih:abc\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

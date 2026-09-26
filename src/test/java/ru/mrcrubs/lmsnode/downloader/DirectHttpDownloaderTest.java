@@ -268,6 +268,24 @@ class DirectHttpDownloaderTest {
         assertEquals("bytes=30000-", handler.ranges.getLast());
     }
 
+    @Test
+    void downloadShouldRespectSpeedLimit(@TempDir Path tempDir) throws Exception {
+        byte[] content = new byte[300_000];
+        new java.util.Random(4).nextBytes(content);
+        server = startServer(new RangeHandler(content, "\"v1\""));
+
+        DownloadRequest request = new DownloadRequest(UUID.randomUUID(), null, url("/file.bin"), tempDir, 200_000L);
+        DownloadExecutionContext context = new DownloadExecutionContext();
+        context.setSpeedLimit(request.maxSpeedBytes());
+        long start = System.nanoTime();
+        DownloadResult result = downloader.download(request, context, update -> {
+        });
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertArrayEquals(content, Files.readAllBytes(Path.of(result.outputPath())));
+        assertTrue(elapsedMs >= 1200, "300 KB at 200 KB/s should take ~1.5 s, took " + elapsedMs + " ms");
+    }
+
     private HttpResponse<?> responseWithHeaders(Map<String, List<String>> headers) {
         HttpResponse<?> response = mock(HttpResponse.class);
         when(response.headers()).thenReturn(HttpHeaders.of(headers, (x, y) -> true));
