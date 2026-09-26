@@ -21,6 +21,9 @@ import ru.mrcrubs.lmsnode.service.JobNotFoundException;
 import ru.mrcrubs.lmsnode.service.JobService;
 import ru.mrcrubs.lmsnode.service.OutputNotAvailableException;
 import ru.mrcrubs.lmsnode.service.PreviewService;
+import ru.mrcrubs.lmsnode.service.MediaExtractException;
+import ru.mrcrubs.lmsnode.service.MediaExtractService;
+import ru.mrcrubs.lmsnode.api.MediaExtractResponse;
 
 import org.junit.jupiter.api.io.TempDir;
 
@@ -68,6 +71,9 @@ class JobControllerWebMvcTest {
 
     @MockitoBean
     private PreviewService previewService;
+
+    @MockitoBean
+    private MediaExtractService mediaExtractService;
 
     @TempDir
     Path tempDir;
@@ -406,5 +412,32 @@ class JobControllerWebMvcTest {
                         .content("{\"type\":\"DIRECT\",\"url\":\"https://example.com/file\",\"maxSpeedBytes\":2000000}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.jobId").value(jobId.toString()));
+    }
+
+    @Test
+    void extractShouldListEntriesAndMapErrors() throws Exception {
+        when(mediaExtractService.extract("https://example.com/list")).thenReturn(new MediaExtractResponse(
+                "https://example.com/list", "playlist", "Mix", "Generic", null, null, null,
+                List.of(new MediaExtractResponse.Entry("https://example.com/a.mp4", "A", 12L, null)), 1, false));
+        mockMvc.perform(post("/api/jobs/extract")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://example.com/list\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("playlist"))
+                .andExpect(jsonPath("$.entries[0].url").value("https://example.com/a.mp4"))
+                .andExpect(jsonPath("$.entries[0].durationSeconds").value(12));
+
+        when(mediaExtractService.extract("https://example.com/nothing"))
+                .thenThrow(new MediaExtractException("Unsupported URL: https://example.com/nothing"));
+        mockMvc.perform(post("/api/jobs/extract")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://example.com/nothing\"}"))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.error").value("Unsupported URL: https://example.com/nothing"));
+
+        mockMvc.perform(post("/api/jobs/extract")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"magnet:?xt=urn:btih:abc\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

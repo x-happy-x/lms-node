@@ -153,6 +153,20 @@ HTTP (`DIRECT`) downloads follow it immediately; aria2c, torrent and yt-dlp jobs
 continue from their partial files (`--max-download-limit` / `--limit-rate`). The limit is kept
 across restarts and shown in job responses.
 
+### Find videos (yt-dlp)
+
+`POST /api/jobs/extract` with `{"url":"https://..."}` runs `yt-dlp -J --flat-playlist` and returns
+what the page contains without downloading anything:
+
+- `kind: "video"` — one video: `title`, `durationSeconds`, `thumbnail`, `sizeBytes` (if known);
+- `kind: "playlist"` — a playlist, channel or a page with several embedded videos: `entries`
+  (`url`, `title`, `durationSeconds`, `thumbnail`), `entryCount`, `truncated` (the list is cut at
+  300 entries).
+
+`url` in the answer and in each entry can be sent as a `YTDLP` job. yt-dlp errors (unsupported
+site, private video) come back as `422 {"error": "..."}`. Timeout: `node.extract.timeout-seconds`
+(default 90).
+
 ### Job output
 
 `GET /api/jobs/{jobId}/file`

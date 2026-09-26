@@ -17,9 +17,12 @@ import ru.mrcrubs.lmsnode.api.CreateJobResponse;
 import ru.mrcrubs.lmsnode.api.JobPreflightRequest;
 import ru.mrcrubs.lmsnode.api.JobPreflightResponse;
 import ru.mrcrubs.lmsnode.api.JobResponse;
+import ru.mrcrubs.lmsnode.api.MediaExtractRequest;
+import ru.mrcrubs.lmsnode.api.MediaExtractResponse;
 import ru.mrcrubs.lmsnode.api.MoveJobOutputRequest;
 import ru.mrcrubs.lmsnode.api.SpeedLimitRequest;
 import ru.mrcrubs.lmsnode.service.DownloadPreflightService;
+import ru.mrcrubs.lmsnode.service.MediaExtractService;
 import ru.mrcrubs.lmsnode.service.PreviewService;
 import ru.mrcrubs.lmsnode.service.JobService;
 
@@ -39,18 +42,27 @@ public class JobController {
 
     private final DownloadPreflightService downloadPreflightService;
     private final PreviewService previewService;
+    private final MediaExtractService mediaExtractService;
 
     public JobController(JobService jobService,
                          DownloadPreflightService downloadPreflightService,
-                         PreviewService previewService) {
+                         PreviewService previewService,
+                         MediaExtractService mediaExtractService) {
         this.jobService = jobService;
         this.downloadPreflightService = downloadPreflightService;
         this.previewService = previewService;
+        this.mediaExtractService = mediaExtractService;
     }
 
     @PostMapping("/preflight")
     public JobPreflightResponse preflight(@Valid @RequestBody JobPreflightRequest request) {
         return downloadPreflightService.preflight(request.url());
+    }
+
+    /** Lists the videos / playlist entries yt-dlp finds at a URL, without downloading. */
+    @PostMapping("/extract")
+    public MediaExtractResponse extract(@Valid @RequestBody MediaExtractRequest request) {
+        return mediaExtractService.extract(request.url());
     }
 
     @PostMapping
