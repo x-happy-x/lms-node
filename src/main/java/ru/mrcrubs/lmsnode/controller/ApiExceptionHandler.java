@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import ru.mrcrubs.lmsnode.service.JobNotFoundException;
+import ru.mrcrubs.lmsnode.service.MediaExtractException;
 import ru.mrcrubs.lmsnode.service.OutputNotAvailableException;
 
 import java.util.Map;
@@ -26,6 +27,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(OutputNotAvailableException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public Map<String, String> handleNoOutput(OutputNotAvailableException ex) {
+        return Map.of("error", ex.getMessage());
+    }
+
+    @ExceptionHandler(MediaExtractException.class)
+    @ResponseStatus(HttpStatus.UNPROCESSABLE_CONTENT)
+    public Map<String, String> handleExtract(MediaExtractException ex) {
         return Map.of("error", ex.getMessage());
     }
 
