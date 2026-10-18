@@ -1,0 +1,13 @@
+FROM maven:3.9-eclipse-temurin-21 AS checked
+WORKDIR /src
+COPY pom.xml ./
+RUN mvn -B -ntp dependency:go-offline
+COPY src ./src
+RUN mvn -B -ntp verify
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends yt-dlp aria2 ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/* && mkdir -p /downloads
+COPY --from=checked /src/target/lms-node-*.jar /app/lms-node.jar
+EXPOSE 8080
+VOLUME ["/downloads"]
+ENTRYPOINT ["java","-Dspring.jmx.enabled=false","-jar","/app/lms-node.jar"]

@@ -289,3 +289,12 @@ Quick start:
 ## Release
 
 See `RELEASE_CHECKLIST.md` for pre-release and post-deploy checks.
+
+## Автодеплой Forgejo
+
+Workflow в `.forgejo/workflows/deploy.yml` проверяет историю на секреты, запускает
+проверки и собирает готовые образы на runner ПК (`pc-linux`). Push в
+`master` после успешной сборки обновляет сервис на `192.168.99.33`.
+Другие ветки только проверяются. Серверные данные/пароли сохраняются в томах;
+перед деплоем создаётся backup, ошибка healthcheck возвращает предыдущие образы.
+Для сборки ПК должен быть включён. GitHub не используется. Общая задача INFRA-29.
