@@ -1,0 +1,60 @@
+name: lms-node checks and deploy
+on:
+  push: null
+  pull_request: null
+  workflow_dispatch: null
+concurrency:
+  group: lms-node-${{ forgejo.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+    working-directory: source
+jobs:
+  checks-and-deploy:
+    runs-on: pc-linux
+    timeout-minutes: 60
+    container:
+      image: homeapps-ci:node22-docker28-gitleaks8.30.1-v2
+    steps:
+      - name: Checkout exact commit
+        working-directory: .
+        env:
+          CI_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          CI_SHA: ${{ forgejo.sha }}
+          CI_URL: ${{ forgejo.server_url }}/${{ forgejo.repository }}.git
+        run: |-
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+          export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$CI_TOKEN" | base64 -w0)"
+          git clone --quiet --no-checkout "$CI_URL" source
+          git -C source checkout --quiet --detach "$CI_SHA"
+      - name: Audit history and secrets
+        run: |-
+          node /opt/homeapps-ci/audit.mjs
+      - name: Test and build runtime images
+        working-directory: .
+        env:
+          CI_SHA: ${{ forgejo.sha }}
+          npm_config_fetch_timeout: "45000"
+        run: |
+          set -euo pipefail
+          context=$(mktemp -d)
+          trap 'rm -rf "$context"' EXIT
+          git -C source archive --format=tar HEAD | tar -xf - -C "$context"
+          docker build -f "$context/Dockerfile.ci" --build-arg CI_SHA="$CI_SHA" --label "org.opencontainers.image.revision=$CI_SHA" --label homeapps.service=lms-node -t "homeapps-ci-lms-node:$CI_SHA" "$context"
+      - name: Deploy release branch
+        if: ${{ forgejo.ref == 'refs/heads/master' && (forgejo.event_name == 'push' || forgejo.event_name == 'workflow_dispatch') }}
+        env:
+          CI_SHA: ${{ forgejo.sha }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |-
+          set -euo pipefail
+          umask 077
+          credentials=$(mktemp -d)
+          trap 'rm -rf "$credentials"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$credentials/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$credentials/known_hosts"
+          unset DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS
+          docker save "homeapps-ci-lms-node:$CI_SHA" | gzip -1 | ssh -i "$credentials/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$credentials/known_hosts" homeapps-ci@192.168.99.33 "deploy $CI_SHA"
