@@ -8,6 +8,7 @@ RUN apt-get update \
 RUN mkdir -p /downloads
 
 COPY target/lms-node-*.jar /app/lms-node.jar
+COPY db /app/db
 
 EXPOSE 8080
 VOLUME ["/downloads"]
