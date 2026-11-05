@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration;
 import ru.mrcrubs.lmsnode.infra.FileJobRepository;
 import ru.mrcrubs.lmsnode.infra.InMemoryJobRepository;
 import ru.mrcrubs.lmsnode.infra.JobRepository;
+import ru.mrcrubs.lmsnode.infra.PostgresJobRepository;
 
 import java.nio.file.Path;
 
@@ -15,6 +16,7 @@ public class AppConfig {
 
     @Bean
     public JobRepository jobRepository(NodeProperties nodeProperties) {
+        if (System.getenv("DATABASE_URL_FILE") != null) return new PostgresJobRepository();
         String stateFile = nodeProperties.getStateFile();
         if (stateFile == null || stateFile.isBlank()) {
             return new InMemoryJobRepository();
