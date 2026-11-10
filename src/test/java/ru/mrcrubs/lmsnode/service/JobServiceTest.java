@@ -30,6 +30,30 @@ class JobServiceTest {
 
     private JobService jobService;
 
+    @Test
+    void videoOptionsShouldReachExecutionAndPersist(@TempDir Path dir) {
+        var captured = new java.util.concurrent.atomic.AtomicReference<DownloadRequest>();
+        Downloader downloader = new Downloader() {
+            public JobType id() { return JobType.YTDLP; }
+            public DownloadResult download(DownloadRequest request, DownloadExecutionContext context,
+                    java.util.function.Consumer<ProgressUpdate> progress) {
+                captured.set(request);
+                return new DownloadResult(null, "done");
+            }
+        };
+        NodeProperties properties = nodeProperties();
+        properties.setDownloadDir(dir.toString());
+        var state = dir.resolve("state.json");
+        var repository = new FileJobRepository(state);
+        jobService = new JobService(List.of(downloader), properties, repository);
+        var options = new ru.mrcrubs.lmsnode.model.YtDlpOptions(720, false, "mkv", true);
+        UUID id = jobService.create(JobType.YTDLP, "https://example.com/list", "courses", true, null, options);
+        assertTrue(waitUntil(() -> captured.get() != null && jobService.get(id).getStatus() == JobStatus.DONE, 3000));
+        assertEquals(options, captured.get().ytdlpOptions());
+        assertEquals(dir.resolve("courses"), captured.get().downloadDir());
+        assertEquals(options, new FileJobRepository(state).findById(id).orElseThrow().getYtdlpOptions());
+    }
+
     @AfterEach
     void tearDown() {
         if (jobService != null) {

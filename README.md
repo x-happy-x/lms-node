@@ -99,6 +99,34 @@ Response `201`:
 { "jobId": "uuid" }
 ```
 
+For `YTDLP`, optional `ytdlpOptions` selects media settings (LMS-11 / client LMSC-7):
+
+```json
+{
+  "type": "YTDLP",
+  "url": "https://example.com/playlist",
+  "storagePath": "video/courses",
+  "ytdlpOptions": {
+    "maxHeight": 1080,
+    "audioOnly": false,
+    "container": "mp4",
+    "playlist": true
+  }
+}
+```
+
+`maxHeight` is a strict upper limit (144–4320, omitted = best); `audioOnly: true`
+extracts M4A and ignores video height/container. `container` accepts `auto`, `mp4`,
+or `mkv`; MP4/MKV remux without forcing a codec conversion. ffmpeg is required for
+merging/remuxing/extracting audio. `playlist: true` passes `--yes-playlist`, keeps
+all entries in `<storagePath>/playlist-<jobId>` with numbered names and returns that
+directory as `outputPath` (file endpoint serves it as ZIP). Pauses/retries reuse the
+same directory and partial files. `playlist: false` uses `--no-playlist` when a URL
+contains both a video and a playlist. Omitting all options preserves prior yt-dlp
+defaults. Options are stored in JSON/PostgreSQL snapshots and returned in job data.
+Preflight reports `ytdlpOptionsSupported: true`; clients should check this flag
+before sending options to avoid old workers silently ignoring them.
+
 ### List jobs
 
 `GET /api/jobs?active=true`

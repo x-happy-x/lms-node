@@ -3,6 +3,7 @@ package ru.mrcrubs.lmsnode.api;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
 import ru.mrcrubs.lmsnode.model.JobType;
+import ru.mrcrubs.lmsnode.model.YtDlpOptions;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -23,7 +24,8 @@ public record JobResponse(
         Instant finishedAt,
         String outputPath,
         Long outputSizeBytes,
-        Long maxSpeedBytes
+        Long maxSpeedBytes,
+        YtDlpOptions ytdlpOptions
 ) {
     public static JobResponse from(DownloadJob job) {
         return new JobResponse(
@@ -42,7 +44,8 @@ public record JobResponse(
                 job.getFinishedAt(),
                 job.getOutputPath(),
                 job.getOutputSizeBytes(),
-                job.getMaxSpeedBytes()
+                job.getMaxSpeedBytes(),
+                job.getYtdlpOptions()
         );
     }
 }

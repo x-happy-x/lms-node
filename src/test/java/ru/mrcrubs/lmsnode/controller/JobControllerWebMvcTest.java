@@ -101,13 +101,35 @@ class JobControllerWebMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.recommendedType").value("DIRECT"))
                 .andExpect(jsonPath("$.sizeBytes").value(123))
-                .andExpect(jsonPath("$.supportedTypes[0]").value("DIRECT"));
+                .andExpect(jsonPath("$.supportedTypes[0]").value("DIRECT"))
+                .andExpect(jsonPath("$.ytdlpOptionsSupported").value(true));
+    }
+
+    @Test
+    void createShouldValidateAndForwardVideoOptions() throws Exception {
+        var options = new ru.mrcrubs.lmsnode.model.YtDlpOptions(1080, false, "mp4", true);
+        var id = UUID.randomUUID();
+        when(jobService.create(JobType.YTDLP, "https://example.com/list", "courses", true, null, options)).thenReturn(id);
+        mockMvc.perform(post("/api/jobs").contentType(MediaType.APPLICATION_JSON).content("""
+                {"type":"YTDLP","url":"https://example.com/list","storagePath":"courses",
+                 "ytdlpOptions":{"maxHeight":1080,"audioOnly":false,"container":"mp4","playlist":true}}
+                """))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.jobId").value(id.toString()));
+        for (String invalid : List.of(
+                "{\"maxHeight\":99999}", "{\"container\":\"--exec\"}")) {
+            mockMvc.perform(post("/api/jobs").contentType(MediaType.APPLICATION_JSON).content(
+                    "{\"type\":\"YTDLP\",\"url\":\"https://example.com/list\",\"ytdlpOptions\":" + invalid + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+        mockMvc.perform(post("/api/jobs").contentType(MediaType.APPLICATION_JSON).content(
+                "{\"type\":\"DIRECT\",\"url\":\"https://example.com/video\",\"ytdlpOptions\":{\"playlist\":true}}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
     void createShouldReturn201AndJobId() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true), isNull())).thenReturn(jobId);
+        when(jobService.create(eq(JobType.YTDLP), eq("https://example.com/video"), isNull(), eq(true), isNull(), isNull())).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -124,7 +146,7 @@ class JobControllerWebMvcTest {
     @Test
     void createShouldPassStoragePath() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(true), isNull())).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(true), isNull(), isNull())).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -142,7 +164,7 @@ class JobControllerWebMvcTest {
     @Test
     void createShouldAllowAddingWithoutImmediateStart() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(false), isNull())).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), eq("movies/2026"), eq(false), isNull(), isNull())).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -176,7 +198,7 @@ class JobControllerWebMvcTest {
     void createShouldAcceptMagnetForTorrent() throws Exception {
         UUID jobId = UUID.randomUUID();
         String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=file";
-        when(jobService.create(JobType.TORRENT, magnet, null, true, null)).thenReturn(jobId);
+        when(jobService.create(JobType.TORRENT, magnet, null, true, null, null)).thenReturn(jobId);
 
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -406,7 +428,7 @@ class JobControllerWebMvcTest {
                         .content("{\"maxSpeedBytes\":-5}"))
                 .andExpect(status().isBadRequest());
 
-        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), isNull(), eq(true), eq(2_000_000L))).thenReturn(jobId);
+        when(jobService.create(eq(JobType.DIRECT), eq("https://example.com/file"), isNull(), eq(true), eq(2_000_000L), isNull())).thenReturn(jobId);
         mockMvc.perform(post("/api/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"type\":\"DIRECT\",\"url\":\"https://example.com/file\",\"maxSpeedBytes\":2000000}"))

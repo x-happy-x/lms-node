@@ -36,6 +36,7 @@ public class YtDlpDownloader implements Downloader {
                                    Consumer<ProgressUpdate> progressConsumer) throws Exception {
         Path filesList = Files.createTempFile("lms-node-ytdlp-" + request.jobId(), ".txt");
         try {
+            Files.createDirectories(outputDirectory(request));
             List<String> command = buildCommand(request, filesList);
             AtomicReference<String> lastLine = new AtomicReference<>();
             AtomicReference<String> lastError = new AtomicReference<>();
@@ -54,6 +55,7 @@ public class YtDlpDownloader implements Downloader {
             }
 
             String outputPath = readLastExistingPath(filesList);
+            if (isPlaylist(request) && outputPath != null) outputPath = outputDirectory(request).toString();
             return new DownloadResult(outputPath, lastLine.get() == null ? "yt-dlp finished" : lastLine.get());
         } finally {
             Files.deleteIfExists(filesList);
@@ -83,10 +85,38 @@ public class YtDlpDownloader implements Downloader {
             command.add("--limit-rate");
             command.add(String.valueOf(request.maxSpeedBytes()));
         }
+        var options = request.ytdlpOptions();
+        if (options != null) {
+            options.validate();
+            if (options.playlist() != null) command.add(options.playlist() ? "--yes-playlist" : "--no-playlist");
+            if (Boolean.TRUE.equals(options.audioOnly())) {
+                command.addAll(List.of("-f", "bestaudio/best", "--extract-audio", "--audio-format", "m4a"));
+            } else {
+                if (options.maxHeight() != null) {
+                    String cap = "[height<=" + options.maxHeight() + "]";
+                    command.addAll(List.of("-f", "bestvideo*" + cap + "+bestaudio/best" + cap));
+                }
+                if (options.container() != null && !"auto".equals(options.container())) {
+                    command.addAll(List.of("--merge-output-format", options.container(), "--remux-video", options.container()));
+                }
+            }
+        }
+        if (isPlaylist(request)) {
+            command.addAll(List.of("-o", "%(playlist_index)05d - %(title).180B [%(id)s].%(ext)s"));
+        }
         command.add("-P");
-        command.add(request.downloadDir().toString());
+        command.add(outputDirectory(request).toString());
+        command.add("--");
         command.add(request.url());
         return command;
+    }
+
+    private boolean isPlaylist(DownloadRequest request) {
+        return request.ytdlpOptions() != null && Boolean.TRUE.equals(request.ytdlpOptions().playlist());
+    }
+
+    Path outputDirectory(DownloadRequest request) {
+        return isPlaylist(request) ? request.downloadDir().resolve("playlist-" + request.jobId()) : request.downloadDir();
     }
 
     private String readLastExistingPath(Path filesList) {
