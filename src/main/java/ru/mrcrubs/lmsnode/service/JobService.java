@@ -11,6 +11,7 @@ import ru.mrcrubs.lmsnode.infra.JobRepository;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
 import ru.mrcrubs.lmsnode.model.JobType;
+import ru.mrcrubs.lmsnode.model.YtDlpOptions;
 
 import java.nio.file.Files;
 import java.nio.file.FileStore;
@@ -95,11 +96,21 @@ public class JobService {
     }
 
     public UUID create(JobType type, String url, String storagePath, boolean startImmediately, Long maxSpeedBytes) {
+        return create(type, url, storagePath, startImmediately, maxSpeedBytes, null);
+    }
+
+    public UUID create(JobType type, String url, String storagePath, boolean startImmediately, Long maxSpeedBytes,
+                       YtDlpOptions options) {
+        if (options != null) {
+            options.validate();
+            if (type != JobType.YTDLP) throw new IllegalArgumentException("ytdlpOptions require YTDLP job type");
+        }
         String normalizedStoragePath = normalizeStoragePath(storagePath);
         resolveDownloadDir(normalizedStoragePath);
         UUID jobId = UUID.randomUUID();
         DownloadJob job = new DownloadJob(jobId, type, url, normalizedStoragePath, Instant.now());
         job.setMaxSpeedBytes(maxSpeedBytes);
+        job.setYtdlpOptions(options);
         if (!startImmediately) {
             job.pause(Instant.now(), "Added without start");
         }
@@ -460,7 +471,7 @@ public class JobService {
             Path jobDownloadDir = resolveDownloadDir(job.getStoragePath());
             Files.createDirectories(jobDownloadDir);
             DownloadRequest request = new DownloadRequest(job.getJobId(), job.getType(), job.getUrl(), jobDownloadDir,
-                    job.getMaxSpeedBytes());
+                    job.getMaxSpeedBytes(), job.getYtdlpOptions());
             DownloadResult result = downloader.download(request, context, update -> applyProgress(job, context, update));
 
             synchronized (job) {

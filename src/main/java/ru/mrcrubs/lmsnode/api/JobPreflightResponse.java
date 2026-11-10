@@ -12,6 +12,12 @@ public record JobPreflightResponse(
         List<JobType> supportedTypes,
         List<DownloadOptionResponse> options,
         String defaultStoragePath,
-        List<StorageTargetResponse> storageTargets
+        List<StorageTargetResponse> storageTargets,
+        boolean ytdlpOptionsSupported
 ) {
+    public JobPreflightResponse(String url, Long sizeBytes, boolean sizeKnown, JobType recommendedType,
+                               List<JobType> supportedTypes, List<DownloadOptionResponse> options,
+                               String defaultStoragePath, List<StorageTargetResponse> storageTargets) {
+        this(url, sizeBytes, sizeKnown, recommendedType, supportedTypes, options, defaultStoragePath, storageTargets, true);
+    }
 }

@@ -69,7 +69,7 @@ public class JobController {
     @ResponseStatus(HttpStatus.CREATED)
     public CreateJobResponse create(@Valid @RequestBody CreateJobRequest request) {
         UUID jobId = jobService.create(request.type(), request.url(), request.storagePath(),
-                request.shouldStartImmediately(), request.maxSpeedBytes());
+                request.shouldStartImmediately(), request.maxSpeedBytes(), request.ytdlpOptions());
         return new CreateJobResponse(jobId);
     }
 

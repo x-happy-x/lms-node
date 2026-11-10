@@ -21,6 +21,11 @@ public class DownloadJob {
     private volatile Long outputSizeBytes;
     /** Download speed limit in bytes per second; null = unlimited. */
     private volatile Long maxSpeedBytes;
+    private YtDlpOptions ytdlpOptions;
+
+    public YtDlpOptions getYtdlpOptions() { return ytdlpOptions; }
+
+    public void setYtdlpOptions(YtDlpOptions options) { this.ytdlpOptions = options; }
 
     public DownloadJob(UUID jobId, JobType type, String url, String storagePath, Instant createdAt) {
         this.jobId = jobId;

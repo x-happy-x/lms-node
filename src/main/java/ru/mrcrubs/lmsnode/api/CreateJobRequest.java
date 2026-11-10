@@ -1,5 +1,6 @@
 package ru.mrcrubs.lmsnode.api;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -7,6 +8,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 import ru.mrcrubs.lmsnode.downloader.TorrentDownloader;
 import ru.mrcrubs.lmsnode.model.JobType;
+import ru.mrcrubs.lmsnode.model.YtDlpOptions;
 
 public record CreateJobRequest(
         @NotNull JobType type,
@@ -15,7 +17,8 @@ public record CreateJobRequest(
         String url,
         String storagePath,
         Boolean startImmediately,
-        @PositiveOrZero Long maxSpeedBytes
+        @PositiveOrZero Long maxSpeedBytes,
+        @Valid YtDlpOptions ytdlpOptions
 ) {
     public boolean shouldStartImmediately() {
         return startImmediately == null || startImmediately;
@@ -24,5 +27,10 @@ public record CreateJobRequest(
     @AssertTrue(message = "magnet links are supported only by TORRENT jobs")
     public boolean isUrlSupportedByType() {
         return type == JobType.TORRENT || !TorrentDownloader.isMagnet(url);
+    }
+
+    @AssertTrue(message = "ytdlpOptions require YTDLP job type")
+    public boolean isYtdlpOptionsSupportedByType() {
+        return ytdlpOptions == null || type == JobType.YTDLP;
     }
 }

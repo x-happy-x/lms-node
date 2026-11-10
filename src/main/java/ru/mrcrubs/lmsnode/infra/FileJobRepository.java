@@ -7,6 +7,7 @@ import tools.jackson.databind.json.JsonMapper;
 import ru.mrcrubs.lmsnode.model.DownloadJob;
 import ru.mrcrubs.lmsnode.model.JobStatus;
 import ru.mrcrubs.lmsnode.model.JobType;
+import ru.mrcrubs.lmsnode.model.YtDlpOptions;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -96,13 +97,14 @@ public class FileJobRepository extends InMemoryJobRepository {
                        Instant finishedAt,
                        String outputPath,
                        Long outputSizeBytes,
-                       Long maxSpeedBytes) {
+                       Long maxSpeedBytes,
+                       YtDlpOptions ytdlpOptions) {
         // Fields are volatile; no job lock here, callers may already hold other jobs' locks.
         static JobSnapshot from(DownloadJob job) {
             return new JobSnapshot(job.getJobId(), job.getType(), job.getUrl(), job.getStoragePath(),
                     job.getStatus(), job.getPercent(), job.getTotalBytes(), job.getMessage(),
                     job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(),
-                    job.getOutputPath(), job.getOutputSizeBytes(), job.getMaxSpeedBytes());
+                    job.getOutputPath(), job.getOutputSizeBytes(), job.getMaxSpeedBytes(), job.getYtdlpOptions());
         }
 
         DownloadJob toJob() {
@@ -116,6 +118,7 @@ public class FileJobRepository extends InMemoryJobRepository {
             job.setOutputPath(outputPath);
             job.setOutputSizeBytes(outputSizeBytes);
             job.setMaxSpeedBytes(maxSpeedBytes);
+            job.setYtdlpOptions(ytdlpOptions);
             return job;
         }
     }
