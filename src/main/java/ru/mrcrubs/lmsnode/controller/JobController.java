@@ -62,7 +62,7 @@ public class JobController {
     /** Lists the videos / playlist entries yt-dlp finds at a URL, without downloading. */
     @PostMapping("/extract")
     public MediaExtractResponse extract(@Valid @RequestBody MediaExtractRequest request) {
-        return mediaExtractService.extract(request.url());
+        return request.impersonate() == null || request.impersonate().isEmpty() ? mediaExtractService.extract(request.url()) : mediaExtractService.extract(request.url(), request.impersonate());
     }
 
     @PostMapping

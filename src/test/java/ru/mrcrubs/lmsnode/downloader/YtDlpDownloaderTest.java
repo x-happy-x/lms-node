@@ -16,6 +16,15 @@ class YtDlpDownloaderTest {
     private final YtDlpDownloader downloader = new YtDlpDownloader("yt-dlp");
 
     @Test
+    void profileIsASeparateArgumentAndOldJobsKeepNormalRequests(@TempDir Path dir) {
+        var options=new YtDlpOptions(null,false,null,false,null,null,null,null,false,false,"chrome-152:windows-10");
+        var request=new DownloadRequest(UUID.randomUUID(),JobType.YTDLP,"https://course.test/video",dir,null,options);
+        var command=downloader.buildCommand(request,dir.resolve("paths.txt"));
+        assertEquals("chrome-152:windows-10",command.get(command.indexOf("--impersonate")+1));
+        assertFalse(downloader.buildCommand(new DownloadRequest(UUID.randomUUID(),JobType.YTDLP,"https://course.test",dir,null,new YtDlpOptions(null,false,null,false)),dir.resolve("old.txt")).contains("--impersonate"));
+    }
+
+    @Test
     void advancedOptionsReachYtdlpAsTypedArguments(@TempDir Path dir) {
         var options = new YtDlpOptions(1080, false, "mp4", false, null, 30, 15, 75, true, true);
         options.validate();

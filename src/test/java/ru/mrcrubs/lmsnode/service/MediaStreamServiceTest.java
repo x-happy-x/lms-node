@@ -8,6 +8,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MediaStreamServiceTest {
     private final MediaStreamService service = new MediaStreamService("yt-dlp", "ffmpeg");
+    @Test void streamInspectionUsesTheSelectedProfile() {
+        var command=service.inspectionCommand("https://course.test/watch","chrome");
+        assertEquals("chrome",command.get(command.indexOf("--impersonate")+1));
+        assertTrue(command.contains("--skip-download"));
+    }
     @Test void formatsKeepResolutionFpsAndCombinedSizeWithoutExposingSourceUrls() throws Exception {
         var media = service.parse("""
             {"title":"Lesson","duration":100,"http_headers":{"User-Agent":"Browser","Cookie":"private"},"formats":[
