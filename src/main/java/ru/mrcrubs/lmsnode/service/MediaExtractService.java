@@ -69,7 +69,7 @@ public class MediaExtractService {
                 "--no-warnings", "--no-progress",
                 "--playlist-end", String.valueOf(MAX_ENTRIES),
                 "--socket-timeout", "20",
-                "--", url);
+                "--", MediaSourceResolver.resolve(url));
     }
 
     static String errorMessage(String stderr, int exitCode) {

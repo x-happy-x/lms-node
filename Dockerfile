@@ -2,13 +2,15 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends yt-dlp aria2 ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends python3 curl aria2 ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /downloads
 
 COPY target/lms-node-*.jar /app/lms-node.jar
 COPY db /app/db
+COPY scripts/install-ytdlp.sh /tmp/install-ytdlp.sh
+RUN sh /tmp/install-ytdlp.sh && rm /tmp/install-ytdlp.sh
 
 EXPOSE 8080
 VOLUME ["/downloads"]
