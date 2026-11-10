@@ -90,16 +90,21 @@ public class YtDlpDownloader implements Downloader {
             options.validate();
             if (options.playlist() != null) command.add(options.playlist() ? "--yes-playlist" : "--no-playlist");
             if (Boolean.TRUE.equals(options.audioOnly())) {
-                command.addAll(List.of("-f", "bestaudio/best", "--extract-audio", "--audio-format", "m4a"));
+                command.addAll(List.of("-f", "bestaudio/best", "--extract-audio", "--audio-format", options.audioFormat()==null?"m4a":options.audioFormat()));
             } else {
-                if (options.maxHeight() != null) {
-                    String cap = "[height<=" + options.maxHeight() + "]";
+                if (options.maxHeight() != null || options.maxFps()!=null) {
+                    String cap = (options.maxHeight()==null?"":"[height<=" + options.maxHeight() + "]")+(options.maxFps()==null?"":"[fps<="+options.maxFps()+"]");
                     command.addAll(List.of("-f", "bestvideo*" + cap + "+bestaudio/best" + cap));
                 }
                 if (options.container() != null && !"auto".equals(options.container())) {
                     command.addAll(List.of("--merge-output-format", options.container(), "--remux-video", options.container()));
                 }
             }
+            if(options.startSeconds()!=null || options.endSeconds()!=null){
+                command.addAll(List.of("--download-sections","*"+java.util.Objects.requireNonNullElse(options.startSeconds(),0)+"-"+(options.endSeconds()==null?"inf":options.endSeconds())));
+                if(Boolean.TRUE.equals(options.forceKeyframes()))command.add("--force-keyframes-at-cuts");
+            }
+            if(Boolean.TRUE.equals(options.embedMetadata()))command.add("--embed-metadata");
         }
         if (isPlaylist(request)) {
             command.addAll(List.of("-o", "%(playlist_index)05d - %(title).180B [%(id)s].%(ext)s"));

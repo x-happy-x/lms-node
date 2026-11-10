@@ -16,6 +16,22 @@ class YtDlpDownloaderTest {
     private final YtDlpDownloader downloader = new YtDlpDownloader("yt-dlp");
 
     @Test
+    void advancedOptionsReachYtdlpAsTypedArguments(@TempDir Path dir) {
+        var options = new YtDlpOptions(1080, false, "mp4", false, null, 30, 15, 75, true, true);
+        options.validate();
+        var command = downloader.buildCommand(new DownloadRequest(UUID.randomUUID(), JobType.YTDLP,
+                "https://example.com/video", dir, null, options), dir.resolve("paths.txt"));
+        assertEquals("bestvideo*[height<=1080][fps<=30]+bestaudio/best[height<=1080][fps<=30]", command.get(command.indexOf("-f")+1));
+        assertEquals("*15-75", command.get(command.indexOf("--download-sections")+1));
+        assertTrue(command.contains("--force-keyframes-at-cuts")); assertTrue(command.contains("--embed-metadata"));
+        var audio = new YtDlpOptions(null,true,null,false,"opus",null,null,null,false,false);
+        var audioCommand = downloader.buildCommand(new DownloadRequest(UUID.randomUUID(),JobType.YTDLP,"https://example.com/video",dir,null,audio),dir.resolve("paths.txt"));
+        assertEquals("opus", audioCommand.get(audioCommand.indexOf("--audio-format")+1));
+        assertThrows(IllegalArgumentException.class,()->new YtDlpOptions(null,false,null,false,null,null,80,20,false,false).validate());
+        assertThrows(IllegalArgumentException.class,()->new YtDlpOptions(null,false,null,false,"--exec",null,null,null,false,false).validate());
+    }
+
+    @Test
     void playlistResultShouldExposeAllFilesAsDirectory(@TempDir Path dir) throws Exception {
         boolean windows = System.getProperty("os.name").startsWith("Windows");
         Path stub = dir.resolve(windows ? "fake-ytdlp.cmd" : "fake-ytdlp");
