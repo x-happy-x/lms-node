@@ -35,8 +35,10 @@ public class MediaExtractService {
         this.timeoutSeconds = timeoutSeconds;
     }
 
-    public MediaExtractResponse extract(String url) {
-        List<String> command = buildCommand(url);
+    public MediaExtractResponse extract(String url) { return extract(url, null); }
+
+    public MediaExtractResponse extract(String url, String impersonate) {
+        List<String> command = buildCommand(url, impersonate);
         Process process;
         try {
             process = new ProcessBuilder(command).start();
@@ -63,13 +65,14 @@ public class MediaExtractService {
         }
     }
 
-    List<String> buildCommand(String url) {
-        return List.of(binary,
-                "-J", "--flat-playlist",
-                "--no-warnings", "--no-progress",
-                "--playlist-end", String.valueOf(MAX_ENTRIES),
-                "--socket-timeout", "20",
-                "--", MediaSourceResolver.resolve(url));
+    List<String> buildCommand(String url) { return buildCommand(url, null); }
+    List<String> buildCommand(String url, String impersonate) {
+        List<String> command = new ArrayList<>(List.of(binary,
+                "-J", "--flat-playlist", "--no-warnings", "--no-progress",
+                "--playlist-end", String.valueOf(MAX_ENTRIES), "--socket-timeout", "20"));
+        ru.mrcrubs.lmsnode.model.YtDlpProfile.append(command, impersonate);
+        command.addAll(List.of("--", MediaSourceResolver.resolve(url)));
+        return command;
     }
 
     static String errorMessage(String stderr, int exitCode) {

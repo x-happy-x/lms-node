@@ -3,6 +3,7 @@ package ru.mrcrubs.lmsnode.service;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import java.util.List;
 import ru.mrcrubs.lmsnode.api.MediaExtractResponse;
 
 import java.io.File;
@@ -17,6 +18,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MediaExtractServiceTest {
     private final MediaExtractService service = new MediaExtractService("yt-dlp", 60);
+
+    @Test
+    void searchProfileIsPassedBeforeTheUrl() {
+        var command=service.buildCommand("https://course.test/lesson","chrome");
+        assertEquals("chrome",command.get(command.indexOf("--impersonate")+1));
+        assertEquals(List.of("--","https://course.test/lesson"),command.subList(command.size()-2,command.size()));
+    }
 
     @Test
     void parsesFlatPlaylistEntries() {

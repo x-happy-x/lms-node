@@ -25,7 +25,9 @@ public class MediaStreamService {
     private final Map<String, Media> cache = new LinkedHashMap<>();
     private final Map<String, Session> sessions = new LinkedHashMap<>();
 
-    public record Request(String url, Integer maxHeight, Integer maxFps, Boolean direct) {}
+    public record Request(String url, Integer maxHeight, Integer maxFps, Boolean direct, String impersonate) {
+        public Request(String url, Integer maxHeight, Integer maxFps, Boolean direct) { this(url,maxHeight,maxFps,direct,null); }
+    }
     public record VariantInfo(int height, int fps, Long sizeBytes, boolean sizeEstimated, String quality) {}
     public record Info(String title, Double durationSeconds, int height, int fps, Long sizeBytes,
                        boolean sizeEstimated, String quality, List<VariantInfo> variants) {}
@@ -58,16 +60,18 @@ public class MediaStreamService {
 
     private Media media(Request request) {
         validUrl(request.url());
+        ru.mrcrubs.lmsnode.model.YtDlpProfile.validate(request.impersonate());
+        String cacheKey = request.url() + "\n" + Objects.toString(request.impersonate(), "");
         if (request.maxHeight() != null && (request.maxHeight() < 144 || request.maxHeight() > 4320)) throw new IllegalArgumentException();
         if (request.maxFps() != null && (request.maxFps() < 1 || request.maxFps() > 240)) throw new IllegalArgumentException();
         synchronized (cache) {
-            Media hit = cache.get(request.url());
+            Media hit = cache.get(cacheKey);
             if (hit != null && hit.until > System.currentTimeMillis()) return hit;
         }
         if (!inspections.tryAcquire()) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Media inspection is busy");
         try {
             Media result;
-            try { result = parse(runInspection(MediaSourceResolver.resolve(request.url())), request.url()); }
+            try { result = parse(runInspection(MediaSourceResolver.resolve(request.url()), request.impersonate()), request.url()); }
             catch (MediaExtractException error) {
                 if (!Boolean.TRUE.equals(request.direct())) throw error;
                 result = new Media("Видео", null, List.of(new Variant(0, 0, null, true, new Input(request.url(), Map.of()), null, 0)), System.currentTimeMillis() + 600_000);
@@ -75,20 +79,24 @@ public class MediaStreamService {
             synchronized (cache) {
                 cache.entrySet().removeIf(e -> e.getValue().until < System.currentTimeMillis());
                 if (cache.size() >= 64) cache.remove(cache.keySet().iterator().next());
-                cache.put(request.url(), result);
+                cache.put(cacheKey, result);
             }
             return result;
         } finally { inspections.release(); }
     }
 
-    List<String> inspectionCommand(String url) {
-        return List.of(ytdlp, "-J", "--skip-download", "--no-playlist", "--no-warnings", "--no-progress", "--socket-timeout", "12", "--", url);
+    List<String> inspectionCommand(String url) { return inspectionCommand(url, null); }
+    List<String> inspectionCommand(String url, String impersonate) {
+        List<String> command = new ArrayList<>(List.of(ytdlp, "-J", "--skip-download", "--no-playlist", "--no-warnings", "--no-progress", "--socket-timeout", "12"));
+        ru.mrcrubs.lmsnode.model.YtDlpProfile.append(command, impersonate);
+        command.addAll(List.of("--", url));
+        return command;
     }
 
-    private String runInspection(String url) {
+    private String runInspection(String url, String impersonate) {
         Process process = null;
         try {
-            process = new ProcessBuilder(inspectionCommand(url)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            process = new ProcessBuilder(inspectionCommand(url, impersonate)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
             Process running = process;
             CompletableFuture<byte[]> output = CompletableFuture.supplyAsync(() -> {
                 try (InputStream in = running.getInputStream()) {

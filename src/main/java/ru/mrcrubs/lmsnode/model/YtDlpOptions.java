@@ -15,12 +15,19 @@ public record YtDlpOptions(
         @Min(0) @Max(604800) Integer startSeconds,
         @Min(1) @Max(604800) Integer endSeconds,
         Boolean forceKeyframes,
-        Boolean embedMetadata
+        Boolean embedMetadata,
+        @jakarta.validation.constraints.Size(max = 80) String impersonate
 ) {
     public YtDlpOptions(Integer maxHeight, Boolean audioOnly, String container, Boolean playlist) {
-        this(maxHeight,audioOnly,container,playlist,null,null,null,null,null,null);
+        this(maxHeight,audioOnly,container,playlist,null,null,null,null,null,null,null);
+    }
+    public YtDlpOptions(Integer maxHeight, Boolean audioOnly, String container, Boolean playlist,
+                        String audioFormat, Integer maxFps, Integer startSeconds, Integer endSeconds,
+                        Boolean forceKeyframes, Boolean embedMetadata) {
+        this(maxHeight,audioOnly,container,playlist,audioFormat,maxFps,startSeconds,endSeconds,forceKeyframes,embedMetadata,null);
     }
     public void validate() {
+        YtDlpProfile.validate(impersonate);
         if (maxHeight != null && (maxHeight < 144 || maxHeight > 4320)) {
             throw new IllegalArgumentException("maxHeight must be between 144 and 4320");
         }

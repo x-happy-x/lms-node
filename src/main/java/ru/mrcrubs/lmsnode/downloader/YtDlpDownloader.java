@@ -88,6 +88,7 @@ public class YtDlpDownloader implements Downloader {
         var options = request.ytdlpOptions();
         if (options != null) {
             options.validate();
+            ru.mrcrubs.lmsnode.model.YtDlpProfile.append(command, options.impersonate());
             if (options.playlist() != null) command.add(options.playlist() ? "--yes-playlist" : "--no-playlist");
             if (Boolean.TRUE.equals(options.audioOnly())) {
                 command.addAll(List.of("-f", "bestaudio/best", "--extract-audio", "--audio-format", options.audioFormat()==null?"m4a":options.audioFormat()));

@@ -359,3 +359,29 @@ Docker-образы используют закреплённый официал
 SHA-256 (`scripts/install-ytdlp.sh`), а не устаревшую версию из apt. Версию и
 контрольную сумму обновлять вместе. Дубликаты разрешений без известного FPS
 не показываются, если манифест содержит то же разрешение с известной частотой.
+
+
+### Сетевой профиль и диагностика yt-dlp (LMS-16)
+
+Docker устанавливает curl_cffi и зависимости в `/opt/ytdlp-python` из
+`requirements-ytdlp-network.txt` с точными версиями и SHA-256 wheel-файлов.
+`yt-dlp` запускается через это окружение; nightly остаётся закреплённым.
+
+`impersonate` в `/api/jobs/extract`, `/api/media/info`, `/api/media/preview` и
+`ytdlpOptions.impersonate` задания: пустое значение выключает профиль (по умолчанию),
+`chrome`/`edge`/`firefox`/`safari`/`tor` выбирают доступный профиль браузера,
+`auto` передаёт `--impersonate ""`. Точные версии и ОС берутся из
+`GET /api/media/capabilities`: `impersonationTargets`, `impersonationSupported`,
+`diagnosticsSupported`. Preflight сообщает `impersonationOptionsSupported`.
+Профиль относится к запросам yt-dlp; FFmpeg использует собственный сетевой клиент.
+Cookies и авторизация локального браузера не переносятся.
+
+`POST /api/media/diagnose` принимает `{mode, url, impersonate, verbose}`:
+`formats` (-F), `json` (-J), `extract` (flat-playlist), `version`, `profiles`.
+Последним двум URL не нужен. Ответ содержит `command` (массив argv), `exitCode`,
+`stdout`, `stderr`, `truncated`, `timedOut`, `durationMillis`.
+Запросы не создают задания и не сохраняют медиа. Флаги фиксированы, конфиги yt-dlp
+игнорируются, shell не запускается. Один запрос одновременно, до 60 секунд,
+по 64 КиБ stdout/stderr; после таймаута завершается дерево процесса.
+Все маршруты защищены обычной HMAC-аутентификацией ноды. Роутер LMSC-13
+предоставляет ручную диагностику только администратору LMS.
