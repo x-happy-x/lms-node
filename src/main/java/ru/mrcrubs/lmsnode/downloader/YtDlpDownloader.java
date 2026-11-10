@@ -112,7 +112,7 @@ public class YtDlpDownloader implements Downloader {
         command.add("-P");
         command.add(outputDirectory(request).toString());
         command.add("--");
-        command.add(request.url());
+        command.add(ru.mrcrubs.lmsnode.service.MediaSourceResolver.resolve(request.url()));
         return command;
     }
 

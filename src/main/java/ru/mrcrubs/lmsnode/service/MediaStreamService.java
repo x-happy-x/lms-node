@@ -32,7 +32,7 @@ public class MediaStreamService {
     public record Preview(String sessionId, long expiresAt, Info info) {}
     record Input(String url, Map<String, String> headers) {}
     record Variant(int height, int fps, Long size, boolean estimated, Input video, Input audio, double score) {
-        VariantInfo view() { return new VariantInfo(height, fps, size, estimated, height > 0 ? height + "p" + (fps > 30 ? " · " + fps + " fps" : "") : "Исходное"); }
+        VariantInfo view() { return new VariantInfo(height, fps, size, estimated, height > 0 ? height + "p" + (fps > 0 ? " · " + fps + " fps" : "") : "Исходное"); }
     }
     record Media(String title, Double duration, List<Variant> variants, long until) {}
     record Session(Media media, Variant selected, long until) {}
@@ -67,7 +67,7 @@ public class MediaStreamService {
         if (!inspections.tryAcquire()) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Media inspection is busy");
         try {
             Media result;
-            try { result = parse(runInspection(request.url()), request.url()); }
+            try { result = parse(runInspection(MediaSourceResolver.resolve(request.url())), request.url()); }
             catch (MediaExtractException error) {
                 if (!Boolean.TRUE.equals(request.direct())) throw error;
                 result = new Media("Видео", null, List.of(new Variant(0, 0, null, true, new Input(request.url(), Map.of()), null, 0)), System.currentTimeMillis() + 600_000);
@@ -132,6 +132,10 @@ public class MediaStreamService {
             if (!variants.containsKey(key) || variant.score > variants.get(key).score) variants.put(key,variant);
         }
         if (variants.isEmpty()) throw new MediaExtractException("Нет доступного видеопотока");
+        // Progressive URLs often omit FPS; don't show a duplicate unknown-FPS quality
+        // when the manifest describes the same resolution completely.
+        var knownHeights = variants.values().stream().filter(v -> v.fps > 0).map(Variant::height).collect(java.util.stream.Collectors.toSet());
+        variants.values().removeIf(v -> v.fps == 0 && knownHeights.contains(v.height));
         return new Media(Objects.requireNonNullElse(string(info,"title"),"Видео"), duration, List.copyOf(variants.values()), System.currentTimeMillis()+600_000);
     }
 
