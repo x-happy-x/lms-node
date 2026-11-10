@@ -13,11 +13,17 @@ public record JobPreflightResponse(
         List<DownloadOptionResponse> options,
         String defaultStoragePath,
         List<StorageTargetResponse> storageTargets,
-        boolean ytdlpOptionsSupported
+        boolean ytdlpOptionsSupported,
+        boolean advancedOptionsSupported
 ) {
     public JobPreflightResponse(String url, Long sizeBytes, boolean sizeKnown, JobType recommendedType,
                                List<JobType> supportedTypes, List<DownloadOptionResponse> options,
                                String defaultStoragePath, List<StorageTargetResponse> storageTargets) {
-        this(url, sizeBytes, sizeKnown, recommendedType, supportedTypes, options, defaultStoragePath, storageTargets, true);
+        this(url, sizeBytes, sizeKnown, recommendedType, supportedTypes, options, defaultStoragePath, storageTargets, true, true);
+    }
+    public JobPreflightResponse(String url, Long sizeBytes, boolean sizeKnown, JobType recommendedType,
+                               List<JobType> supportedTypes, List<DownloadOptionResponse> options,
+                               String defaultStoragePath, List<StorageTargetResponse> storageTargets, boolean supported) {
+        this(url,sizeBytes,sizeKnown,recommendedType,supportedTypes,options,defaultStoragePath,storageTargets,supported,true);
     }
 }
