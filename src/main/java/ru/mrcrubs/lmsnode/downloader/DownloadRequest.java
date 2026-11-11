@@ -16,8 +16,12 @@ public record DownloadRequest(
         String url,
         Path downloadDir,
         Long maxSpeedBytes,
-        YtDlpOptions ytdlpOptions
+        YtDlpOptions ytdlpOptions,
+        ru.mrcrubs.lmsnode.service.NetworkRoutes.Route networkRoute
 ) {
+    public DownloadRequest(UUID jobId, JobType type, String url, Path downloadDir, Long maxSpeedBytes, YtDlpOptions options) {
+        this(jobId,type,url,downloadDir,maxSpeedBytes,options,null);
+    }
     public DownloadRequest(UUID jobId, JobType type, String url, Path downloadDir, Long maxSpeedBytes) {
         this(jobId, type, url, downloadDir, maxSpeedBytes, null);
     }

@@ -408,3 +408,28 @@ HTML/SVG всегда скачиваются как вложения. Ответ
 активной загрузки также блокируется. Для завершённых заданий пути выходных файлов
 обновляются после переименования; удаление точного выхода очищает его ссылку.
 Все операции ноды защищены HMAC, права viewer/editor проверяются на роутере.
+
+
+### Выделенные маршруты HomeNet (LMS-18)
+
+`NODE_NETWORK_ROUTES_FILE=/app/config/network-routes.json` задаёт приватный реестр:
+`{"routes":[{"id":"homenet-eu","label":"HomeNet · Европа","proxyUrl":"http://USER:PASSWORD@LAN_IP:PORT"}]}`.
+Файл монтируется read-only, не включается в образ и не публикуется в API.
+Разрешены только аутентифицированные HTTP proxy endpoints с явным портом;
+неизвестная/некорректная конфигурация останавливает запуск. После изменения файла
+нужен перезапуск ноды. Выделенные listeners настраивает HomeNet, не клиент.
+
+`GET /api/network/routes` возвращает только безопасные `id`, `label`, `available`,
+`supportedTypes`, `scope` и `networkRoutesSupported`. `networkRouteId` в создании
+задания сохраняется вместе с подписью в jobs.json; пустое значение сохраняет
+обычный сетевой путь. Поддержаны DIRECT (ProxySelector + ограниченный proxy
+Authenticator), YTDLP (--proxy), ARIA2C (--all-proxy). TORRENT с выбранным HTTP
+маршрутом отклоняется. При ошибке выбранного прокси прямого fallback нет.
+
+Поле также принимают extract, media/info, media/preview и media/diagnose.
+Выбранный путь используется при разрешении Яндекс-превью, получении форматов,
+подготовке и отдаче FFmpeg-потока; кеши разделены по маршрутам. Секреты proxy
+userinfo/Proxy-Authorization скрываются в диагностике и выводе downloader-ов.
+HTTP Basic для CONNECT разрешён только для Authenticator выбранного endpoint-а.
+Preflight сообщает `networkRoutesSupported`; действительные пути наблюдает
+HomeNet через scoped API, отдельно от запланированного routeId.

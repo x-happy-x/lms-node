@@ -45,6 +45,7 @@ public class JobService {
     private static final int STORAGE_CHILDREN_LIMIT = 20;
 
     private final JobRepository jobRepository;
+    private final NetworkRoutes networkRoutes;
     private final Map<UUID, DownloadExecutionContext> executions = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastProgressUpdateMillis = new ConcurrentHashMap<>();
     /**
@@ -58,6 +59,11 @@ public class JobService {
     private volatile boolean shuttingDown;
 
     public JobService(List<Downloader> downloaderList, NodeProperties nodeProperties, JobRepository jobRepository) {
+        this(downloaderList, nodeProperties, jobRepository, NetworkRoutes.disabled());
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public JobService(List<Downloader> downloaderList, NodeProperties nodeProperties, JobRepository jobRepository, NetworkRoutes networkRoutes) {
+        this.networkRoutes = networkRoutes;
         this.jobRepository = jobRepository;
         this.downloaders = downloaderList.stream().collect(Collectors.toUnmodifiableMap(Downloader::id, Function.identity()));
         this.executor = Executors.newFixedThreadPool(Math.max(1, nodeProperties.getMaxParallel()));
@@ -101,6 +107,11 @@ public class JobService {
 
     public UUID create(JobType type, String url, String storagePath, boolean startImmediately, Long maxSpeedBytes,
                        YtDlpOptions options) {
+        return create(type,url,storagePath,startImmediately,maxSpeedBytes,options,null);
+    }
+    public UUID create(JobType type, String url, String storagePath, boolean startImmediately, Long maxSpeedBytes,
+                       YtDlpOptions options, String networkRouteId) {
+        var route = networkRoutes.resolve(networkRouteId,type);
         if (options != null) {
             options.validate();
             if (type != JobType.YTDLP) throw new IllegalArgumentException("ytdlpOptions require YTDLP job type");
@@ -111,6 +122,7 @@ public class JobService {
         DownloadJob job = new DownloadJob(jobId, type, url, normalizedStoragePath, Instant.now());
         job.setMaxSpeedBytes(maxSpeedBytes);
         job.setYtdlpOptions(options);
+        if (route != null) job.setNetworkRoute(route.id, route.label);
         if (!startImmediately) {
             job.pause(Instant.now(), "Added without start");
         }
@@ -504,7 +516,7 @@ public class JobService {
             Path jobDownloadDir = resolveDownloadDir(job.getStoragePath());
             Files.createDirectories(jobDownloadDir);
             DownloadRequest request = new DownloadRequest(job.getJobId(), job.getType(), job.getUrl(), jobDownloadDir,
-                    job.getMaxSpeedBytes(), job.getYtdlpOptions());
+                    job.getMaxSpeedBytes(), job.getYtdlpOptions(), networkRoutes.resolve(job.getNetworkRouteId(), job.getType()));
             DownloadResult result = downloader.download(request, context, update -> applyProgress(job, context, update));
 
             synchronized (job) {
@@ -542,14 +554,14 @@ public class JobService {
                     if (treatAsCanceled) {
                         job.cancel(Instant.now(), sanitizeMessage("Canceled"));
                     } else {
-                        job.fail(Instant.now(), sanitizeMessage(ex.getMessage()));
+                        job.fail(Instant.now(), sanitizeMessage(NetworkRoutes.redact(ex.getMessage())));
                     }
                 }
             }
             if (treatAsCanceled) {
                 log.info("Job stopped during execution: id={}, status={}", job.getJobId(), job.getStatus());
             } else {
-                log.warn("Job failed: id={}, message={}", job.getJobId(), ex.getMessage());
+                log.warn("Job failed: id={}, message={}", job.getJobId(), NetworkRoutes.redact(ex.getMessage()));
             }
         } finally {
             boolean restart;

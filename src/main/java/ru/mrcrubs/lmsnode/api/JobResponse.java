@@ -25,7 +25,9 @@ public record JobResponse(
         String outputPath,
         Long outputSizeBytes,
         Long maxSpeedBytes,
-        YtDlpOptions ytdlpOptions
+        YtDlpOptions ytdlpOptions,
+        String networkRouteId,
+        String networkRouteLabel
 ) {
     public static JobResponse from(DownloadJob job) {
         return new JobResponse(
@@ -45,7 +47,7 @@ public record JobResponse(
                 job.getOutputPath(),
                 job.getOutputSizeBytes(),
                 job.getMaxSpeedBytes(),
-                job.getYtdlpOptions()
+                job.getYtdlpOptions(), job.getNetworkRouteId(), job.getNetworkRouteLabel()
         );
     }
 }

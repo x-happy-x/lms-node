@@ -20,12 +20,14 @@ import java.util.concurrent.*;
 public class MediaStreamService {
     static final long SESSION_MILLIS = Duration.ofHours(2).toMillis();
     private final String ytdlp, ffmpeg;
+    private final NetworkRoutes routes;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final Semaphore inspections = new Semaphore(2), streams = new Semaphore(2);
     private final Map<String, Media> cache = new LinkedHashMap<>();
     private final Map<String, Session> sessions = new LinkedHashMap<>();
 
-    public record Request(String url, Integer maxHeight, Integer maxFps, Boolean direct, String impersonate) {
+    public record Request(String url, Integer maxHeight, Integer maxFps, Boolean direct, String impersonate, String networkRouteId) {
+        public Request(String url, Integer maxHeight, Integer maxFps, Boolean direct, String impersonate) { this(url,maxHeight,maxFps,direct,impersonate,null); }
         public Request(String url, Integer maxHeight, Integer maxFps, Boolean direct) { this(url,maxHeight,maxFps,direct,null); }
     }
     public record VariantInfo(int height, int fps, Long sizeBytes, boolean sizeEstimated, String quality) {}
@@ -37,12 +39,16 @@ public class MediaStreamService {
         VariantInfo view() { return new VariantInfo(height, fps, size, estimated, height > 0 ? height + "p" + (fps > 0 ? " · " + fps + " fps" : "") : "Исходное"); }
     }
     record Media(String title, Double duration, List<Variant> variants, long until) {}
-    record Session(Media media, Variant selected, long until) {}
+    record Session(Media media, Variant selected, long until, NetworkRoutes.Route route) {}
 
+    @org.springframework.beans.factory.annotation.Autowired
     public MediaStreamService(@Value("${node.tools.ytdlp:yt-dlp}") String ytdlp,
-                              @Value("${node.tools.ffmpeg:ffmpeg}") String ffmpeg) {
+                              @Value("${node.tools.ffmpeg:ffmpeg}") String ffmpeg, NetworkRoutes routes) {
+        this.routes = routes;
         this.ytdlp = ytdlp; this.ffmpeg = ffmpeg;
     }
+
+    public MediaStreamService(String ytdlp, String ffmpeg) { this(ytdlp,ffmpeg,NetworkRoutes.disabled()); }
 
     public Info inspect(Request request) { return view(media(request), request); }
 
@@ -53,7 +59,7 @@ public class MediaStreamService {
         synchronized (sessions) {
             sessions.entrySet().removeIf(e -> e.getValue().until < System.currentTimeMillis());
             if (sessions.size() >= 32) sessions.remove(sessions.keySet().iterator().next());
-            sessions.put(id, new Session(media, selected, until));
+            sessions.put(id, new Session(media, selected, until, routes.resolve(request.networkRouteId())));
         }
         return new Preview(id, until, view(media, request));
     }
@@ -61,7 +67,8 @@ public class MediaStreamService {
     private Media media(Request request) {
         validUrl(request.url());
         ru.mrcrubs.lmsnode.model.YtDlpProfile.validate(request.impersonate());
-        String cacheKey = request.url() + "\n" + Objects.toString(request.impersonate(), "");
+        var route = routes.resolve(request.networkRouteId());
+        String cacheKey = request.url() + "\n" + Objects.toString(request.impersonate(), "") + "\n" + Objects.toString(request.networkRouteId(), "");
         if (request.maxHeight() != null && (request.maxHeight() < 144 || request.maxHeight() > 4320)) throw new IllegalArgumentException();
         if (request.maxFps() != null && (request.maxFps() < 1 || request.maxFps() > 240)) throw new IllegalArgumentException();
         synchronized (cache) {
@@ -71,7 +78,7 @@ public class MediaStreamService {
         if (!inspections.tryAcquire()) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Media inspection is busy");
         try {
             Media result;
-            try { result = parse(runInspection(MediaSourceResolver.resolve(request.url()), request.impersonate()), request.url()); }
+            try { result = parse(runInspection(MediaSourceResolver.resolve(request.url(), route), request.impersonate(), route), request.url()); }
             catch (MediaExtractException error) {
                 if (!Boolean.TRUE.equals(request.direct())) throw error;
                 result = new Media("Видео", null, List.of(new Variant(0, 0, null, true, new Input(request.url(), Map.of()), null, 0)), System.currentTimeMillis() + 600_000);
@@ -86,17 +93,20 @@ public class MediaStreamService {
     }
 
     List<String> inspectionCommand(String url) { return inspectionCommand(url, null); }
-    List<String> inspectionCommand(String url, String impersonate) {
+    List<String> inspectionCommand(String url, String impersonate) { return inspectionCommand(url,impersonate,null); }
+    List<String> inspectionCommand(String url, String impersonate, NetworkRoutes.Route route) {
         List<String> command = new ArrayList<>(List.of(ytdlp, "-J", "--skip-download", "--no-playlist", "--no-warnings", "--no-progress", "--socket-timeout", "12"));
+        command.add("--ignore-config");
+        if (route != null) command.addAll(List.of("--proxy", route.toolProxyUrl()));
         ru.mrcrubs.lmsnode.model.YtDlpProfile.append(command, impersonate);
         command.addAll(List.of("--", url));
         return command;
     }
 
-    private String runInspection(String url, String impersonate) {
+    private String runInspection(String url, String impersonate, NetworkRoutes.Route route) {
         Process process = null;
         try {
-            process = new ProcessBuilder(inspectionCommand(url, impersonate)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            process = new ProcessBuilder(inspectionCommand(url, impersonate, route)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
             Process running = process;
             CompletableFuture<byte[]> output = CompletableFuture.supplyAsync(() -> {
                 try (InputStream in = running.getInputStream()) {
@@ -181,11 +191,13 @@ public class MediaStreamService {
     }
     private static Info view(Media media,Request request){Variant v=choose(media,request.maxHeight(),request.maxFps());return new Info(media.title,media.duration,v.height,v.fps,v.size,v.estimated,v.view().quality,media.variants.stream().map(Variant::view).toList());}
 
-    List<String> streamCommand(Variant variant,int startSeconds){
+    List<String> streamCommand(Variant variant,int startSeconds){ return streamCommand(variant,startSeconds,null); }
+    List<String> streamCommand(Variant variant,int startSeconds,NetworkRoutes.Route route){
         List<String> cmd=new ArrayList<>(List.of(ffmpeg,"-hide_banner","-loglevel","error","-nostdin"));
         for(Input input:variant.audio==null?List.of(variant.video):List.of(variant.video,variant.audio)){
             if(startSeconds>0)cmd.addAll(List.of("-ss",String.valueOf(startSeconds)));
             cmd.addAll(List.of("-rw_timeout","20000000"));
+            if(route!=null)cmd.addAll(List.of("-http_proxy",route.toolProxyUrl()));
             if(!input.headers.isEmpty())cmd.addAll(List.of("-headers",input.headers.entrySet().stream().map(e->e.getKey()+": "+e.getValue()+"\r\n").reduce("",String::concat)));
             cmd.addAll(List.of("-i",input.url));
         }
@@ -202,7 +214,7 @@ public class MediaStreamService {
         if(!streams.tryAcquire())throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,"Two previews are already streaming");
         Process process=null;
         try{
-            process=new ProcessBuilder(streamCommand(variant,startSeconds)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            process=new ProcessBuilder(streamCommand(variant,startSeconds,session.route)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
             try(InputStream input=process.getInputStream()){
                 byte[] first=input.readNBytes(1024);
                 if(first.length==0)throw new MediaExtractException("Не удалось открыть поток через FFmpeg");

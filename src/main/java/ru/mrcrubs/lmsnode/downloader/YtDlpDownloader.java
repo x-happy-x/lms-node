@@ -70,6 +70,8 @@ public class YtDlpDownloader implements Downloader {
     List<String> buildCommand(DownloadRequest request, Path filesList) {
         List<String> command = new ArrayList<>();
         command.add(binary);
+        command.add("--ignore-config");
+        if (request.networkRoute() != null) command.addAll(List.of("--proxy", request.networkRoute().toolProxyUrl()));
         command.add("--newline");
         command.add("--continue");
         command.add("--retries");
@@ -113,7 +115,7 @@ public class YtDlpDownloader implements Downloader {
         command.add("-P");
         command.add(outputDirectory(request).toString());
         command.add("--");
-        command.add(ru.mrcrubs.lmsnode.service.MediaSourceResolver.resolve(request.url()));
+        command.add(ru.mrcrubs.lmsnode.service.MediaSourceResolver.resolve(request.url(), request.networkRoute()));
         return command;
     }
 

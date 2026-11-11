@@ -50,7 +50,7 @@ final class ExternalProcess {
                     continue;
                 }
                 if (!line.isBlank()) {
-                    lineConsumer.accept(line);
+                    lineConsumer.accept(ru.mrcrubs.lmsnode.service.NetworkRoutes.redact(line));
                 }
             }
         } catch (IOException ex) {

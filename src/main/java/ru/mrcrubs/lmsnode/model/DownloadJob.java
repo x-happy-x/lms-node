@@ -22,6 +22,10 @@ public class DownloadJob {
     /** Download speed limit in bytes per second; null = unlimited. */
     private volatile Long maxSpeedBytes;
     private YtDlpOptions ytdlpOptions;
+    private String networkRouteId, networkRouteLabel;
+    public String getNetworkRouteId() { return networkRouteId; }
+    public String getNetworkRouteLabel() { return networkRouteLabel; }
+    public void setNetworkRoute(String id, String label) { this.networkRouteId = id; this.networkRouteLabel = label; }
 
     public YtDlpOptions getYtdlpOptions() { return ytdlpOptions; }
 

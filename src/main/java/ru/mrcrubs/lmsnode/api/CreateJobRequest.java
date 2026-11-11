@@ -18,8 +18,12 @@ public record CreateJobRequest(
         String storagePath,
         Boolean startImmediately,
         @PositiveOrZero Long maxSpeedBytes,
-        @Valid YtDlpOptions ytdlpOptions
+        @Valid YtDlpOptions ytdlpOptions,
+        String networkRouteId
 ) {
+    public CreateJobRequest(JobType type, String url, String storagePath, Boolean startImmediately, Long maxSpeedBytes, YtDlpOptions options) {
+        this(type,url,storagePath,startImmediately,maxSpeedBytes,options,null);
+    }
     public boolean shouldStartImmediately() {
         return startImmediately == null || startImmediately;
     }

@@ -23,18 +23,20 @@ public final class MediaSourceResolver {
     private static final Map<String, Cached> CACHE = new LinkedHashMap<>();
     private MediaSourceResolver() {}
 
-    public static String resolve(String url) {
+    public static String resolve(String url) { return resolve(url, null); }
+    public static String resolve(String url, NetworkRoutes.Route route) {
         URI uri = URI.create(url);
         String host = uri.getHost();
         if (host == null || !(host.equals("yandex.ru") || host.equals("www.yandex.ru")) || !PREVIEW.matcher(uri.getPath()).matches()) return url;
+        String cacheKey = url + "\n" + (route == null ? "" : route.id);
         synchronized (CACHE) {
-            Cached hit = CACHE.get(url);
+            Cached hit = CACHE.get(cacheKey);
             if (hit != null && hit.until > System.currentTimeMillis()) return hit.url;
         }
         try {
             var request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(20))
                     .header("User-Agent", "Mozilla/5.0").GET().build();
-            var response = Network.CLIENT.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            var response = (route == null ? Network.CLIENT : route.client(Duration.ofSeconds(8))).send(request, HttpResponse.BodyHandlers.ofInputStream());
             String source;
             try (var body = response.body()) {
                 if (response.statusCode() != 200) throw new MediaExtractException("Яндекс не отдал страницу превью. Откройте исходный видеосайт.");
@@ -45,7 +47,7 @@ public final class MediaSourceResolver {
             synchronized (CACHE) {
                 CACHE.entrySet().removeIf(e -> e.getValue().until < System.currentTimeMillis());
                 if (CACHE.size() >= 64) CACHE.remove(CACHE.keySet().iterator().next());
-                CACHE.put(url, new Cached(source, System.currentTimeMillis() + 600_000));
+                CACHE.put(cacheKey, new Cached(source, System.currentTimeMillis() + 600_000));
             }
             return source;
         } catch (InterruptedException error) {
