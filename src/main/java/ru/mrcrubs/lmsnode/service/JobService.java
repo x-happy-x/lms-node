@@ -127,6 +127,39 @@ public class JobService {
         return baseDownloadDir;
     }
 
+    /** File-manager mutations keep completed output references valid and never alter active jobs. */
+    public void mutateStoredFile(Path source, Path target) throws java.io.IOException {
+        List<DownloadJob> related = jobRepository.findAll().stream().filter(job -> {
+            String output=job.getOutputPath();
+            if(output!=null&&!output.isBlank()) {
+                Path path=Path.of(output).toAbsolutePath().normalize();
+                if(path.startsWith(source)||source.startsWith(path))return true;
+            }
+            if(ACTIVE_STATUSES.contains(job.getStatus())) {
+                Path directory=resolveDownloadDir(job.getStoragePath());
+                if(Files.isDirectory(source)&&(source.startsWith(directory)||directory.startsWith(source)))return true;
+                return source.toString().contains(job.getJobId().toString());
+            }
+            return false;
+        }).sorted(Comparator.comparing(job->job.getJobId().toString())).toList();
+        mutateStoredFileLocked(related,0,source,target);
+    }
+    private void mutateStoredFileLocked(List<DownloadJob> jobs,int index,Path source,Path target) throws java.io.IOException {
+        if(index<jobs.size()) { synchronized(jobs.get(index)){mutateStoredFileLocked(jobs,index+1,source,target);} return; }
+        if(jobs.stream().anyMatch(job->ACTIVE_STATUSES.contains(job.getStatus())||executions.containsKey(job.getJobId())))
+            throw new IllegalStateException("Файл используется загрузкой. Сначала завершите или отмените её.");
+        if(target==null) Files.delete(source); // Deliberately refuses non-empty directories.
+        else Files.move(source,target); // Never overwrite another file.
+        for(DownloadJob job:jobs) {
+            String output=job.getOutputPath();if(output==null||output.isBlank())continue;
+            Path path=Path.of(output).toAbsolutePath().normalize();
+            if(!path.startsWith(source))continue;
+            job.setOutputPath(target==null?null:target.resolve(source.relativize(path)).toString());
+            job.setMessage(sanitizeMessage(target==null?"Output file removed":"Output renamed"));
+            jobRepository.save(job);
+        }
+    }
+
     public UUID create(JobType type, String url, String storagePath) {
         return create(type, url, storagePath, true);
     }
