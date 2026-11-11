@@ -16,4 +16,4 @@ RUN sh /tmp/install-ytdlp.sh && rm /tmp/install-ytdlp.sh /tmp/ytdlp-network-requ
 EXPOSE 8080
 VOLUME ["/downloads"]
 
-ENTRYPOINT ["java", "-Dspring.jmx.enabled=false", "-jar", "/app/lms-node.jar"]
+ENTRYPOINT ["java", "-Djdk.http.auth.tunneling.disabledSchemes=", "-Dspring.jmx.enabled=false", "-jar", "/app/lms-node.jar"]

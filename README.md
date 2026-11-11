@@ -433,3 +433,12 @@ userinfo/Proxy-Authorization скрываются в диагностике и �
 HTTP Basic для CONNECT разрешён только для Authenticator выбранного endpoint-а.
 Preflight сообщает `networkRoutesSupported`; действительные пути наблюдает
 HomeNet через scoped API, отдельно от запланированного routeId.
+
+
+Для HTTP Basic при HTTPS CONNECT обе Docker-entrypoint задают JVM-параметр
+`-Djdk.http.auth.tunneling.disabledSchemes=` до инициализации HttpClient.
+Переопределяющий entrypoint должен сохранять этот параметр; запуск main без
+Docker выставляет его перед Spring. Поздняя смена свойства в обработчике задания
+не используется: JDK кеширует настройку при создании первых HTTP-клиентов.
+Fresh-JVM CONNECT-тест сначала создаёт посторонний HttpClient, затем проверяет
+407 challenge и Proxy-Authorization только выбранному proxy без обращения к origin.
