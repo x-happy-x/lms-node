@@ -99,8 +99,7 @@ public final class NetworkRoutes {
         }
         public String toolProxyUrl() { return proxy.toString(); }
         public HttpClient client(Duration timeout) {
-            // The authenticator below is limited to this exact proxy, including CONNECT.
-            System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "");
+            // Startup enables authenticated CONNECT. Credentials remain limited to this exact proxy.
             var address = new InetSocketAddress(proxy.getHost(), proxy.getPort());
             return HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NORMAL)
                     .proxy(new ProxySelector() {

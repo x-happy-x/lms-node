@@ -26,6 +26,7 @@ class NetworkRoutesTest {
                 exchange.getResponseHeaders().set("Proxy-Authenticate","Basic realm=\"LMS fixture\"");exchange.sendResponseHeaders(407,-1);exchange.close();return;
             }
             assertEquals("unresolvable.fixture.invalid",exchange.getRequestURI().getHost());
+            assertNull(exchange.getRequestHeaders().getFirst("Authorization"));
             authenticated.incrementAndGet();exchange.sendResponseHeaders(200,bytes.length);exchange.getResponseBody().write(bytes);exchange.close();
         });
         proxy.start();
@@ -75,5 +76,50 @@ class NetworkRoutesTest {
     @Test void selectedToolRoutesIgnoreAmbientProxyBypass() {
         var builder=NetworkRoutes.process(List.of("yt-dlp","--proxy","http://fixture:private@127.0.0.1:34000","https://course.test"));
         for(String key:List.of("NO_PROXY","no_proxy","HTTP_PROXY","http_proxy","HTTPS_PROXY","https_proxy","ALL_PROXY","all_proxy")) assertFalse(builder.environment().containsKey(key));
+    }
+    @Test void authenticatedHttpsConnectWorksAfterAnEarlierClientExists() throws Exception {
+        String javaBinary=Path.of(System.getProperty("java.home"),"bin",System.getProperty("os.name").startsWith("Windows")?"java.exe":"java").toString();
+        Process child=new ProcessBuilder(javaBinary,"-Djdk.http.auth.tunneling.disabledSchemes=","-Djdk.net.unixdomain.tmpdir="+System.getProperty("jdk.net.unixdomain.tmpdir",System.getProperty("java.io.tmpdir")),"-cp",System.getProperty("java.class.path"),ConnectProbe.class.getName()).redirectErrorStream(true).start();
+        boolean ended=child.waitFor(20,java.util.concurrent.TimeUnit.SECONDS);
+        if(!ended)child.destroyForcibly();
+        assertTrue(ended,"CONNECT probe timed out");
+        assertEquals(0,child.exitValue(),new String(child.getInputStream().readAllBytes(),StandardCharsets.UTF_8));
+    }
+    public static class ConnectProbe {
+        public static void main(String[] args) throws Exception {
+            // A fresh JVM with the production startup flag. This client initializes JDK network internals first.
+            java.net.http.HttpClient.newHttpClient();
+            var authenticated=new java.util.concurrent.CountDownLatch(1);
+            var failure=new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            try(var server=new java.net.ServerSocket(0,5,InetAddress.getByName("127.0.0.1"))) {
+                server.setSoTimeout(8000);
+                String expected="Basic "+Base64.getEncoder().encodeToString("fixture:private".getBytes(StandardCharsets.UTF_8));
+                Thread worker=Thread.ofVirtual().start(()->{
+                    try {
+                        for(int attempt=0;attempt<4;attempt++)try(var socket=server.accept()) {
+                            socket.setSoTimeout(5000);
+                            var reader=new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(),StandardCharsets.ISO_8859_1));
+                            String request=reader.readLine();
+                            if(request==null||!request.startsWith("CONNECT unresolvable.fixture.invalid:443"))throw new AssertionError("Expected HTTPS CONNECT through proxy");
+                            String proxyAuth=null;boolean originAuth=false;
+                            for(String line;(line=reader.readLine())!=null&&!line.isEmpty();) {
+                                if(line.regionMatches(true,0,"Proxy-Authorization:",0,20))proxyAuth=line.substring(20).trim();
+                                if(line.regionMatches(true,0,"Authorization:",0,14))originAuth=true;
+                            }
+                            if(originAuth)throw new AssertionError("Origin Authorization leaked to proxy request");
+                            if(expected.equals(proxyAuth)) {
+                                authenticated.countDown();socket.getOutputStream().write("HTTP/1.1 502 Fixture complete\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));return;
+                            }
+                            socket.getOutputStream().write("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"LMS fixture\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+                        }
+                    }catch(Throwable error){failure.set(error);}
+                });
+                var route=new NetworkRoutes.Route("fixture","HTTPS fixture","http://fixture:private@127.0.0.1:"+server.getLocalPort());
+                try { route.client(Duration.ofSeconds(3)).send(java.net.http.HttpRequest.newBuilder(URI.create("https://unresolvable.fixture.invalid/lesson")).timeout(Duration.ofSeconds(8)).build(),java.net.http.HttpResponse.BodyHandlers.discarding()); }
+                catch(java.io.IOException expectedFailure){ /* proxy stops before any TLS/origin connection */ }
+                worker.join(9000);
+                if(authenticated.getCount()!=0)throw new AssertionError("Proxy CONNECT authentication was not sent",failure.get());
+            }
+        }
     }
 }
