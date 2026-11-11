@@ -31,7 +31,7 @@ final class ExternalProcess {
                    Path workDir,
                    DownloadExecutionContext context,
                    Consumer<String> lineConsumer) throws Exception {
-        ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+        ProcessBuilder builder = ru.mrcrubs.lmsnode.service.NetworkRoutes.process(command).redirectErrorStream(true);
         if (workDir != null) {
             builder.directory(workDir.toFile());
         }

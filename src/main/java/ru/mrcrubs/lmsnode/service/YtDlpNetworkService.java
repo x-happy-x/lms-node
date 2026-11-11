@@ -86,7 +86,7 @@ public class YtDlpNetworkService {
         finally { diagnostics.release(); }
     }
     private Result run(List<String> command,int timeoutSeconds) throws IOException,InterruptedException {
-        long started=System.nanoTime();Process process=new ProcessBuilder(command).start();active.add(process);
+        long started=System.nanoTime();Process process=NetworkRoutes.process(command).start();active.add(process);
         Capture stdout=new Capture(process.getInputStream()),stderr=new Capture(process.getErrorStream());
         try {
             boolean done=process.waitFor(timeoutSeconds,TimeUnit.SECONDS);
