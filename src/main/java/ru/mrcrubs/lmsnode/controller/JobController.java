@@ -109,6 +109,10 @@ public class JobController {
     public JobResponse speed(@PathVariable UUID jobId, @Valid @RequestBody SpeedLimitRequest request) {
         return JobResponse.from(jobService.setSpeedLimit(jobId, request.maxSpeedBytes()));
     }
+    @PostMapping("/{jobId}/network")
+    public JobResponse network(@PathVariable UUID jobId, @RequestBody ru.mrcrubs.lmsnode.api.NetworkRouteRequest request) {
+        return JobResponse.from(jobService.setNetworkRoute(jobId, request.networkRouteId()));
+    }
 
     @PostMapping("/{jobId}/move")
     public JobResponse moveOutput(@PathVariable UUID jobId, @RequestBody MoveJobOutputRequest request) throws Exception {

@@ -52,6 +52,7 @@ public class JobService {
      * Jobs resumed/retried while their previous run was still stopping; started once it exits.
      */
     private final Set<UUID> pendingRestarts = ConcurrentHashMap.newKeySet();
+    private final Set<DownloadExecutionContext> supersededExecutions = ConcurrentHashMap.newKeySet();
     private final Map<JobType, Downloader> downloaders;
     private final ExecutorService executor;
     private final Path baseDownloadDir;
@@ -295,6 +296,31 @@ public class JobService {
      * Starts the job now, or right after its previous run finishes stopping, so a quick
      * pause+resume never runs two downloaders on the same partial file. Caller holds the job lock.
      */
+    /** Changes only this job, invalidating old progress before gracefully stopping the old transport. */
+    public DownloadJob setNetworkRoute(UUID jobId, String routeId) {
+        DownloadJob job = get(jobId);
+        var route = networkRoutes.resolve(routeId, job.getType());
+        String normalized = route == null ? null : route.id;
+        DownloadExecutionContext previous;
+        boolean restart;
+        synchronized (job) {
+            if (job.getStatus() == JobStatus.DONE || job.getStatus() == JobStatus.CANCELED)
+                throw new IllegalStateException("Cannot change the route of a finished job");
+            if (java.util.Objects.equals(job.getNetworkRouteId(), normalized)) return job;
+            restart = job.getStatus() == JobStatus.RUNNING || job.getStatus() == JobStatus.QUEUED;
+            previous = executions.get(jobId);
+            if (previous != null) supersededExecutions.add(previous);
+            if (restart) job.pause(Instant.now(), "Changing network route");
+            job.setNetworkRoute(normalized, route == null ? null : route.label);
+            job.setMessage("Network route changed" + (restart ? "; resuming" : ""));
+            pendingRestarts.remove(jobId);
+        }
+        if (previous != null) previous.cancel();
+        jobRepository.save(job);
+        if (restart) resume(jobId);
+        return job;
+    }
+
     private void scheduleRun(DownloadJob job) {
         if (executions.containsKey(job.getJobId())) {
             pendingRestarts.add(job.getJobId());
@@ -569,6 +595,7 @@ public class JobService {
                 if (executions.remove(job.getJobId(), context)) {
                     lastProgressUpdateMillis.remove(job.getJobId());
                 }
+                supersededExecutions.remove(context);
                 restart = pendingRestarts.remove(job.getJobId()) && job.getStatus() == JobStatus.QUEUED;
             }
             // A stop caused by shutdown is not persisted: the job stays RUNNING on disk and continues after restart.
@@ -668,7 +695,7 @@ public class JobService {
     }
 
     private boolean isCurrentExecution(DownloadJob job, DownloadExecutionContext context) {
-        return executions.get(job.getJobId()) == context;
+        return executions.get(job.getJobId()) == context && !supersededExecutions.contains(context);
     }
 
     private void collectSubDirs(Path root, LinkedHashSet<Path> out) {
