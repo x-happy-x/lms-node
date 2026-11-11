@@ -11,10 +11,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/storage")
 public class StorageFilesController {
+    private static final Set<String> INLINE_IMAGES = Set.of("image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp", "image/x-icon", "image/vnd.microsoft.icon", "image/heic", "image/heif");
     private final FileBrowserService files;
     public StorageFilesController(FileBrowserService files) { this.files = files; }
     @ExceptionHandler(ResponseStatusException.class)
@@ -51,6 +53,6 @@ public class StorageFilesController {
     }
     private static boolean safeInline(String mime) {
         return mime.startsWith("video/") || mime.startsWith("audio/") ||
-                (mime.startsWith("image/") && !mime.equals("image/svg+xml")) || mime.equals("application/pdf") || mime.equals("text/plain");
+                INLINE_IMAGES.contains(mime) || mime.equals("application/pdf") || mime.equals("text/plain");
     }
 }

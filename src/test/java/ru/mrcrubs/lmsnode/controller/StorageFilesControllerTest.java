@@ -16,15 +16,25 @@ class StorageFilesControllerTest {
     @TempDir Path root;
     @Test void servesByteRangesAndHeadAndNeverInlinesHtml() throws Exception {
         Files.writeString(root.resolve("lesson.mp4"),"0123456789");Files.writeString(root.resolve("index.html"),"<script>alert(1)</script>");
+        Files.writeString(root.resolve("vector.svg"),"<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"fetch('/api/ui/jobs')\"></svg>");
+        Files.write(root.resolve("poster.png"),new byte[]{1,2,3});
         var jobs=mock(JobService.class);when(jobs.getBaseDownloadDir()).thenReturn(root);
         when(jobs.listStorageTargets(null)).thenReturn(List.of(new StorageTarget(root,1,1,true,null)));
         var mvc=MockMvcBuilders.standaloneSetup(new StorageFilesController(new FileBrowserService(jobs))).build();
         mvc.perform(get("/api/storage/file").param("path","lesson.mp4").param("inline","1").header("Range","bytes=2-5"))
-                .andExpect(status().isPartialContent()).andExpect(header().string("Content-Range","bytes 2-5/10")).andExpect(content().string("2345"));
+                .andExpect(status().isPartialContent()).andExpect(header().string("Content-Range","bytes 2-5/10")).andExpect(content().string("2345"))
+                .andExpect(header().string("Content-Disposition",org.hamcrest.Matchers.startsWith("inline;")));
         mvc.perform(head("/api/storage/file").param("path","lesson.mp4")).andExpect(status().isOk()).andExpect(header().longValue("Content-Length",10)).andExpect(content().string(""));
         mvc.perform(get("/api/storage/file").param("path","index.html").param("inline","1"))
                 .andExpect(status().isOk()).andExpect(header().string("Content-Disposition",org.hamcrest.Matchers.startsWith("attachment;")))
-                .andExpect(header().string("X-Content-Type-Options","nosniff"));
+                .andExpect(header().string("X-Content-Type-Options","nosniff"))
+                .andExpect(header().string("Content-Security-Policy","sandbox; default-src 'none'"));
+        mvc.perform(get("/api/storage/file").param("path","vector.svg").param("inline","1"))
+                .andExpect(status().isOk()).andExpect(header().string("Content-Disposition",org.hamcrest.Matchers.startsWith("attachment;")))
+                .andExpect(header().string("X-Content-Type-Options","nosniff"))
+                .andExpect(header().string("Content-Security-Policy","sandbox; default-src 'none'"));
+        mvc.perform(get("/api/storage/file").param("path","poster.png").param("inline","1"))
+                .andExpect(status().isOk()).andExpect(header().string("Content-Disposition",org.hamcrest.Matchers.startsWith("inline;")));
         mvc.perform(post("/api/storage/files/mkdir").contentType("application/json").content("{\"path\":\"\",\"name\":\"Newfolder\"}"))
                 .andExpect(status().isOk());
         org.junit.jupiter.api.Assertions.assertTrue(Files.isDirectory(root.resolve("Newfolder")));
