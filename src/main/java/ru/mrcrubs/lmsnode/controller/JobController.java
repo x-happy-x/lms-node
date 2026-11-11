@@ -62,14 +62,16 @@ public class JobController {
     /** Lists the videos / playlist entries yt-dlp finds at a URL, without downloading. */
     @PostMapping("/extract")
     public MediaExtractResponse extract(@Valid @RequestBody MediaExtractRequest request) {
+        if (request.networkRouteId() != null && !request.networkRouteId().isEmpty()) return mediaExtractService.extract(request.url(), request.impersonate(), request.networkRouteId());
         return request.impersonate() == null || request.impersonate().isEmpty() ? mediaExtractService.extract(request.url()) : mediaExtractService.extract(request.url(), request.impersonate());
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CreateJobResponse create(@Valid @RequestBody CreateJobRequest request) {
-        UUID jobId = jobService.create(request.type(), request.url(), request.storagePath(),
-                request.shouldStartImmediately(), request.maxSpeedBytes(), request.ytdlpOptions());
+        UUID jobId = request.networkRouteId() == null || request.networkRouteId().isEmpty()
+                ? jobService.create(request.type(), request.url(), request.storagePath(), request.shouldStartImmediately(), request.maxSpeedBytes(), request.ytdlpOptions())
+                : jobService.create(request.type(), request.url(), request.storagePath(), request.shouldStartImmediately(), request.maxSpeedBytes(), request.ytdlpOptions(), request.networkRouteId());
         return new CreateJobResponse(jobId);
     }
 

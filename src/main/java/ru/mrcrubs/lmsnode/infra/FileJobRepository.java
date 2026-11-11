@@ -98,13 +98,13 @@ public class FileJobRepository extends InMemoryJobRepository {
                        String outputPath,
                        Long outputSizeBytes,
                        Long maxSpeedBytes,
-                       YtDlpOptions ytdlpOptions) {
+                       YtDlpOptions ytdlpOptions, String networkRouteId, String networkRouteLabel) {
         // Fields are volatile; no job lock here, callers may already hold other jobs' locks.
         static JobSnapshot from(DownloadJob job) {
             return new JobSnapshot(job.getJobId(), job.getType(), job.getUrl(), job.getStoragePath(),
                     job.getStatus(), job.getPercent(), job.getTotalBytes(), job.getMessage(),
                     job.getCreatedAt(), job.getStartedAt(), job.getFinishedAt(),
-                    job.getOutputPath(), job.getOutputSizeBytes(), job.getMaxSpeedBytes(), job.getYtdlpOptions());
+                    job.getOutputPath(), job.getOutputSizeBytes(), job.getMaxSpeedBytes(), job.getYtdlpOptions(), job.getNetworkRouteId(), job.getNetworkRouteLabel());
         }
 
         DownloadJob toJob() {
@@ -119,6 +119,7 @@ public class FileJobRepository extends InMemoryJobRepository {
             job.setOutputSizeBytes(outputSizeBytes);
             job.setMaxSpeedBytes(maxSpeedBytes);
             job.setYtdlpOptions(ytdlpOptions);
+            job.setNetworkRoute(networkRouteId, networkRouteLabel);
             return job;
         }
     }

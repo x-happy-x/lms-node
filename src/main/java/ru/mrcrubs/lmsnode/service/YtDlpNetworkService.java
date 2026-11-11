@@ -18,15 +18,20 @@ import java.util.regex.Pattern;
 public class YtDlpNetworkService {
     static final int OUTPUT_LIMIT = 65536;
     private final String binary;
+    private final NetworkRoutes routes;
     private final Semaphore diagnostics = new Semaphore(1);
     private final Set<Process> active = ConcurrentHashMap.newKeySet();
     private volatile Capabilities cached;
     private volatile long cacheUntil;
     public record Capabilities(boolean impersonationSupported, List<String> impersonationTargets, boolean diagnosticsSupported) {}
-    public record Request(String mode, String url, String impersonate, Boolean verbose) {}
+    public record Request(String mode, String url, String impersonate, Boolean verbose, String networkRouteId) {
+        public Request(String mode, String url, String impersonate, Boolean verbose) { this(mode,url,impersonate,verbose,null); }
+    }
     public record Result(List<String> command, int exitCode, String stdout, String stderr, boolean truncated,
                          boolean timedOut, long durationMillis) {}
-    public YtDlpNetworkService(@Value("${node.tools.ytdlp:yt-dlp}") String binary) { this.binary = binary; }
+    public YtDlpNetworkService(String binary) { this(binary,NetworkRoutes.disabled()); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public YtDlpNetworkService(@Value("${node.tools.ytdlp:yt-dlp}") String binary, NetworkRoutes routes) { this.binary = binary; this.routes = routes; }
 
     public synchronized Capabilities capabilities() {
         if (cached != null && cacheUntil > System.currentTimeMillis()) return cached;
@@ -61,6 +66,8 @@ public class YtDlpNetworkService {
             case "profiles" -> command.add("--list-impersonate-targets");
             case "formats", "json", "extract" -> {
                 MediaStreamService.validUrl(request.url);
+                var route = routes.resolve(request.networkRouteId);
+                if (route != null) command.addAll(List.of("--proxy",route.toolProxyUrl()));
                 command.addAll(List.of("--skip-download","--no-playlist","--no-progress","--socket-timeout","12",request.mode.equals("formats")?"-F":"-J"));
                 if (request.mode.equals("extract")) { command.remove("--no-playlist");command.addAll(List.of("--flat-playlist","--playlist-end","300")); }
                 YtDlpProfile.append(command,request.impersonate);
@@ -85,7 +92,7 @@ public class YtDlpNetworkService {
             boolean done=process.waitFor(timeoutSeconds,TimeUnit.SECONDS);
             if (!done) { kill(process);process.waitFor(3,TimeUnit.SECONDS); }
             stdout.thread.join(3000);stderr.thread.join(3000);
-            return new Result(List.copyOf(command),done?process.exitValue():124,stdout.text(),stderr.text(),stdout.truncated||stderr.truncated,!done,TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
+            return new Result(command.stream().map(NetworkRoutes::redact).toList(),done?process.exitValue():124,stdout.text(),stderr.text(),stdout.truncated||stderr.truncated,!done,TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
         } finally { active.remove(process);if(process.isAlive())kill(process); }
     }
     static final class Capture {
@@ -105,8 +112,7 @@ public class YtDlpNetworkService {
         }
         String text() {
             synchronized(bytes) {
-                return bytes.toString(StandardCharsets.UTF_8)
-                        .replaceAll("(?i)(https?://)[^\\s/@]+:[^\\s/@]+@","$1[redacted]@");
+                return NetworkRoutes.redact(bytes.toString(StandardCharsets.UTF_8));
             }
         }
     }

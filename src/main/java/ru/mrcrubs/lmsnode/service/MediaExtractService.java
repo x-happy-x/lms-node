@@ -27,18 +27,24 @@ public class MediaExtractService {
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final String binary;
+    private final NetworkRoutes routes;
     private final long timeoutSeconds;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public MediaExtractService(@Value("${node.tools.ytdlp:yt-dlp}") String binary,
-                               @Value("${node.extract.timeout-seconds:90}") long timeoutSeconds) {
+                               @Value("${node.extract.timeout-seconds:90}") long timeoutSeconds, NetworkRoutes routes) {
+        this.routes = routes;
         this.binary = binary;
         this.timeoutSeconds = timeoutSeconds;
     }
 
+    public MediaExtractService(String binary, long timeoutSeconds) { this(binary,timeoutSeconds,NetworkRoutes.disabled()); }
+
     public MediaExtractResponse extract(String url) { return extract(url, null); }
 
-    public MediaExtractResponse extract(String url, String impersonate) {
-        List<String> command = buildCommand(url, impersonate);
+    public MediaExtractResponse extract(String url, String impersonate) { return extract(url, impersonate, null); }
+    public MediaExtractResponse extract(String url, String impersonate, String routeId) {
+        List<String> command = buildCommand(url, impersonate, routes.resolve(routeId));
         Process process;
         try {
             process = new ProcessBuilder(command).start();
@@ -55,7 +61,7 @@ public class MediaExtractService {
             }
             String out = stdout.text();
             if (process.exitValue() != 0 || out.isBlank()) {
-                throw new MediaExtractException(errorMessage(stderr.text(), process.exitValue()));
+                throw new MediaExtractException(NetworkRoutes.redact(errorMessage(stderr.text(), process.exitValue())));
             }
             return parse(out, url);
         } catch (InterruptedException ex) {
@@ -66,12 +72,15 @@ public class MediaExtractService {
     }
 
     List<String> buildCommand(String url) { return buildCommand(url, null); }
-    List<String> buildCommand(String url, String impersonate) {
+    List<String> buildCommand(String url, String impersonate) { return buildCommand(url, impersonate, null); }
+    List<String> buildCommand(String url, String impersonate, NetworkRoutes.Route route) {
         List<String> command = new ArrayList<>(List.of(binary,
                 "-J", "--flat-playlist", "--no-warnings", "--no-progress",
                 "--playlist-end", String.valueOf(MAX_ENTRIES), "--socket-timeout", "20"));
+        command.add("--ignore-config");
+        if (route != null) command.addAll(List.of("--proxy", route.toolProxyUrl()));
         ru.mrcrubs.lmsnode.model.YtDlpProfile.append(command, impersonate);
-        command.addAll(List.of("--", MediaSourceResolver.resolve(url)));
+        command.addAll(List.of("--", MediaSourceResolver.resolve(url, route)));
         return command;
     }
 

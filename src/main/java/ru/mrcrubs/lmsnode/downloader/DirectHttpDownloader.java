@@ -66,7 +66,7 @@ public class DirectHttpDownloader implements Downloader {
     public DownloadResult download(DownloadRequest request,
                                    DownloadExecutionContext context,
                                    java.util.function.Consumer<ProgressUpdate> progressConsumer) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
+        HttpClient client = request.networkRoute() != null ? request.networkRoute().client(Duration.ofSeconds(20)) : HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(20))
                 .build();
