@@ -30,7 +30,10 @@ public class Aria2cDownloader implements Downloader {
         List<String> command = new ArrayList<>(commonArgs(binary, request.downloadDir()));
         // Torrents are a separate job type; here a .torrent link is just a file.
         command.add("--follow-torrent=false");
-        if (request.networkRoute() != null) command.add("--all-proxy=" + request.networkRoute().toolProxyUrl());
+        if (request.networkRoute() != null) {
+            command.add("--no-conf=true");
+            command.add("--all-proxy=" + request.networkRoute().toolProxyUrl());
+        }
         command.add("--max-tries=10");
         command.add("--retry-wait=10");
         if (request.hasSpeedLimit()) {

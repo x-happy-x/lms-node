@@ -47,7 +47,7 @@ public class MediaExtractService {
         List<String> command = buildCommand(url, impersonate, routes.resolve(routeId));
         Process process;
         try {
-            process = new ProcessBuilder(command).start();
+            process = NetworkRoutes.process(command).start();
         } catch (IOException ex) {
             throw new MediaExtractException("yt-dlp is not available on node: " + ex.getMessage(), ex);
         }

@@ -72,4 +72,8 @@ class NetworkRoutesTest {
         assertEquals(route.toolProxyUrl(),diagnostic.get(diagnostic.indexOf("--proxy")+1));
         assertThrows(IllegalArgumentException.class,()->new YtDlpNetworkService("yt-dlp",routes).command(new YtDlpNetworkService.Request("formats","https://course.test/lesson",null,false,"unknown")));
     }
+    @Test void selectedToolRoutesIgnoreAmbientProxyBypass() {
+        var builder=NetworkRoutes.process(List.of("yt-dlp","--proxy","http://fixture:private@127.0.0.1:34000","https://course.test"));
+        for(String key:List.of("NO_PROXY","no_proxy","HTTP_PROXY","http_proxy","HTTPS_PROXY","https_proxy","ALL_PROXY","all_proxy")) assertFalse(builder.environment().containsKey(key));
+    }
 }

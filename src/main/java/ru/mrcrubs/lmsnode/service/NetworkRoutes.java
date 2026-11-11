@@ -71,6 +71,14 @@ public final class NetworkRoutes {
         return value == null ? null : value.replaceAll("(?i)(https?://)[^\\s/@]+@", "$1[redacted]@")
                 .replaceAll("(?im)(Proxy-Authorization:\\s*)[^\\r\\n]+", "$1[redacted]");
     }
+    public static ProcessBuilder process(List<String> command) {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        if (command.contains("--proxy") || command.contains("-http_proxy") || command.stream().anyMatch(arg -> arg.startsWith("--all-proxy="))) {
+            // NO_PROXY and protocol-specific ambient proxies must not override a selected route.
+            for (String key : List.of("NO_PROXY","no_proxy","HTTP_PROXY","http_proxy","HTTPS_PROXY","https_proxy","ALL_PROXY","all_proxy")) builder.environment().remove(key);
+        }
+        return builder;
+    }
     public static final class Route {
         public final String id, label;
         private final URI proxy;

@@ -106,7 +106,7 @@ public class MediaStreamService {
     private String runInspection(String url, String impersonate, NetworkRoutes.Route route) {
         Process process = null;
         try {
-            process = new ProcessBuilder(inspectionCommand(url, impersonate, route)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            process = NetworkRoutes.process(inspectionCommand(url, impersonate, route)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
             Process running = process;
             CompletableFuture<byte[]> output = CompletableFuture.supplyAsync(() -> {
                 try (InputStream in = running.getInputStream()) {
@@ -214,7 +214,7 @@ public class MediaStreamService {
         if(!streams.tryAcquire())throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,"Two previews are already streaming");
         Process process=null;
         try{
-            process=new ProcessBuilder(streamCommand(variant,startSeconds,session.route)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            process=NetworkRoutes.process(streamCommand(variant,startSeconds,session.route)).redirectError(ProcessBuilder.Redirect.DISCARD).start();
             try(InputStream input=process.getInputStream()){
                 byte[] first=input.readNBytes(1024);
                 if(first.length==0)throw new MediaExtractException("Не удалось открыть поток через FFmpeg");
